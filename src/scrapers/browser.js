@@ -38,43 +38,10 @@ class BrowserManager {
       // En production, trouver Chrome installé par puppeteer
       let executablePath;
       if (isProduction) {
-        let candidatePath = null;
-        try {
-          const puppeteerCore = require('puppeteer');
-          if (typeof puppeteerCore.executablePath === 'function') {
-            candidatePath = puppeteerCore.executablePath();
-          } else {
-            candidatePath = puppeteerCore.executablePath || null;
-          }
-        } catch (e) {
-          candidatePath = null;
-        }
-        console.log('🔎 Chrome path candidate:', candidatePath, candidatePath && fs.existsSync(candidatePath));
-
-        const commonCacheDirs = [
-          process.env.PUPPETEER_CACHE_DIR,
-          path.resolve(process.cwd(), process.env.PUPPETEER_CACHE_DIR || '.cache'),
-          '/opt/render/.cache',
-          path.resolve(require('os').homedir(), '.cache', 'puppeteer'),
-        ].filter(Boolean);
-
-        const fallbackPaths = [candidatePath];
-        for (const dir of commonCacheDirs) {
-          fallbackPaths.push(path.resolve(dir, 'puppeteer', 'chrome', 'linux-149.0.7827.22', 'chrome-linux64', 'chrome'));
-          fallbackPaths.push(path.resolve(dir, '.local-chromium', 'linux-149.0.7827.22', 'chrome-linux64', 'chrome'));
-          fallbackPaths.push(path.resolve(dir, 'chrome', 'linux-149.0.7827.22', 'chrome-linux64', 'chrome'));
-          fallbackPaths.push(path.resolve(dir));
-        }
-
-        // Remove null/undefined and duplicates
-        const uniquePaths = [...new Set(fallbackPaths.filter(Boolean))];
-
-        executablePath = uniquePaths.find(p => p && fs.existsSync(p));
-        console.log('🔎 Chrome fallback results:', uniquePaths.map(p => ({ path: p, exists: p && fs.existsSync(p) })));
-
-        if (!executablePath) {
-          console.log('⚠️ Aucun binaire Chrome trouvé en production, Puppeteer utilisera son exécutable par défaut si possible.');
-        }
+        const { execSync } = require('child_process');
+        const chromePath = execSync('find /opt/render/project/src/node_modules/puppeteer -name "chrome" -type f 2>/dev/null | head -1').toString().trim();
+        console.log('🔎 Chrome trouvé:', chromePath);
+        executablePath = chromePath || undefined;
       } else {
         const paths = [
           'C:\\Users\\apatcha\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',

@@ -78,23 +78,36 @@ app.use((err, req, res, next) => {
 // ─── DÉMARRAGE ───────────────────────────────────────────
 async function start() {
   try {
-    // Initialiser Puppeteer
+    // Installer Chrome si on est en production et qu'il n'existe pas
+    if (process.env.NODE_ENV === 'production') {
+      const chromePath = '/opt/render/project/src/node_modules/puppeteer/.local-chromium';
+      const { execSync } = require('child_process');
+      console.log('📦 Installation de Chrome...');
+      try {
+        execSync('npx puppeteer browsers install chrome', { 
+          stdio: 'inherit',
+          cwd: '/opt/render/project/src'
+        });
+        console.log('✅ Chrome installé');
+      } catch (e) {
+        console.log('⚠️ Installation Chrome:', e.message);
+      }
+    }
+
     await browserManager.getBrowser();
     console.log('✅ Browser initialisé');
 
     app.listen(PORT, () => {
       console.log(`🎬 Movie Plus API démarré → http://localhost:${PORT}`);
-      console.log(`📋 Endpoints: http://localhost:${PORT}/`);
     });
 
-    // Préchauffage du cache en arrière-plan
     setTimeout(async () => {
       try {
         console.log('🔥 Préchauffage du cache...');
         const home = await scrapeHome(1);
         console.log(`📦 Cache préchauffé: ${home.total} films`);
       } catch (e) {
-        console.log('⚠️ Préchauffage échoué (normal au premier lancement)');
+        console.log('⚠️ Préchauffage échoué');
       }
     }, 5000);
 
