@@ -1,0 +1,120 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const { PORT, NODE_ENV } = require('./config');
+const browserManager = require('./scrapers/browser');
+const { scrapeHome } = require('./scrapers/homeScraper');
+
+const app = express();
+
+// ─── MIDDLEWARES ────────────────────────────────────────
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors({ origin: '*', methods: ['GET', 'DELETE'] }));
+app.use(compression());
+app.use(express.json());
+if (NODE_ENV !== 'test') app.use(morgan('dev'));
+
+// ─── RATE LIMITING ─────────────────────────────────────
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  message: { success: false, error: 'Trop de requêtes. Réessaie dans 15 minutes.' }
+});
+app.use('/api/', limiter);
+
+// ─── ROUTES ─────────────────────────────────────────────
+app.use('/api', require('./routes/films'));
+app.use('/api', require('./routes/search'));
+
+// ─── HEALTH CHECK ────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    env: NODE_ENV,
+  });
+});
+
+// ─── PAGE D'ACCUEIL ──────────────────────────────────────
+app.get('/', (req, res) => {
+  res.json({
+    name: 'Movie Plus API',
+    version: '1.0.0',
+    source: 'fs17.lol',
+    endpoints: [
+      'GET /health',
+      'GET /api/films/home',
+      'GET /api/films/recent',
+      'GET /api/films/all?page=1',
+      'GET /api/films/french',
+      'GET /api/films/genres',
+      'GET /api/films/genre/:genre',
+      'GET /api/films/detail?url=URL',
+      'GET /api/films/video?url=URL',
+      'GET /api/search?q=query',
+      'GET /api/search/suggestions?q=query',
+      'GET /api/films/cache/stats',
+    ],
+  });
+});
+
+// ─── 404 ────────────────────────────────────────────────
+app.use((req, res) => {
+  res.status(404).json({ success: false, error: `Route '${req.originalUrl}' introuvable` });
+});
+
+// ─── ERREUR GLOBALE ──────────────────────────────────────
+app.use((err, req, res, next) => {
+  console.error('💥 Erreur:', err.stack);
+  res.status(500).json({ success: false, error: 'Erreur serveur interne' });
+});
+
+// ─── DÉMARRAGE ───────────────────────────────────────────
+async function start() {
+  try {
+    // Initialiser Puppeteer
+    await browserManager.getBrowser();
+    console.log('✅ Browser initialisé');
+
+    app.listen(PORT, () => {
+      console.log(`🎬 Movie Plus API démarré → http://localhost:${PORT}`);
+      console.log(`📋 Endpoints: http://localhost:${PORT}/`);
+    });
+
+    // Préchauffage du cache en arrière-plan
+    setTimeout(async () => {
+      try {
+        console.log('🔥 Préchauffage du cache...');
+        const home = await scrapeHome(1);
+        console.log(`📦 Cache préchauffé: ${home.total} films`);
+      } catch (e) {
+        console.log('⚠️ Préchauffage échoué (normal au premier lancement)');
+      }
+    }, 5000);
+
+  } catch (err) {
+    console.error('❌ Erreur démarrage:', err);
+    process.exit(1);
+  }
+}
+
+// Fermeture propre
+async function shutdown() {
+  console.log('\n🛑 Arrêt en cours...');
+  await browserManager.close();
+  process.exit(0);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+process.on('uncaughtException', (err) => {
+  console.error('💥 Exception non capturée:', err);
+});
+
+start();
