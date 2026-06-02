@@ -29,26 +29,24 @@ class BrowserManager {
     this.launching = true;
     try {
       console.log('🚀 Lancement de Puppeteer...');
-      const chromePaths = [
-        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        'C:\\Users\\apatcha\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
-      ];
+      const isProduction = process.env.NODE_ENV === 'production';
+      let executablePath;
 
-      // Vérifier et logger chaque chemin testé
-      let executablePath = null;
-      for (const p of chromePaths) {
-        const exists = fs.existsSync(p);
-        console.log(`🔎 Test chemin Chrome: ${p} -> ${exists}`);
-        if (!executablePath && exists) executablePath = p;
+      if (isProduction) {
+        // Sur Render (Linux), installer et utiliser Chromium
+        executablePath = undefined; // Puppeteer télécharge automatiquement
+      } else {
+        // Sur Windows local
+        const paths = [
+          'C:\\Users\\apatcha\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        ];
+        executablePath = paths.find(p => fs.existsSync(p));
+        if (!executablePath) throw new Error('Chrome non trouvé, installe Google Chrome');
       }
 
-      if (!executablePath) {
-        throw new Error('Chrome non trouvé, installe Google Chrome');
-      }
-
-      this.browser = await puppeteer.launch({
-        executablePath,
+      const launchOptions = {
         headless: 'new',
         args: [
           '--no-sandbox',
@@ -64,7 +62,10 @@ class BrowserManager {
           '--lang=fr-FR',
         ],
         ignoreHTTPSErrors: true,
-      });
+      };
+      if (executablePath) launchOptions.executablePath = executablePath;
+
+      this.browser = await puppeteer.launch(launchOptions);
       this.browser.on('disconnected', () => {
         console.log('⚠️ Browser déconnecté, réinitialisation...');
         this.browser = null;
