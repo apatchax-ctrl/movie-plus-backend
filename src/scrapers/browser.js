@@ -33,8 +33,8 @@ class BrowserManager {
       let executablePath;
 
       if (isProduction) {
-        // Sur Render (Linux), installer et utiliser Chromium
-        executablePath = undefined; // Puppeteer télécharge automatiquement
+        // Sur Render (Linux), utiliser le Chrome stocké dans le cache Puppeteer
+        executablePath = '/opt/render/.cache/puppeteer/chrome/linux-149.0.7827.22/chrome-linux64/chrome';
       } else {
         // Sur Windows local
         const paths = [
