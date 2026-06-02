@@ -2,7 +2,7 @@ services:
   - type: web
     name: movie-plus-backend
     env: node
-    buildCommand: PUPPETEER_CACHE_DIR=./.cache npm install && PUPPETEER_CACHE_DIR=./.cache npx puppeteer browsers install chrome
+    buildCommand: PUPPETEER_CACHE_DIR=/opt/render/.cache npm install && PUPPETEER_CACHE_DIR=/opt/render/.cache npx puppeteer browsers install chrome
     startCommand: node src/index.js
     envVars:
       - key: NODE_ENV
@@ -10,4 +10,4 @@ services:
       - key: BASE_URL
         value: https://fs17.lol
       - key: PUPPETEER_CACHE_DIR
-        value: .cache
+        value: /opt/render/.cache

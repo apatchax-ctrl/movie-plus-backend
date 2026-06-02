@@ -38,19 +38,39 @@ class BrowserManager {
       // En production, trouver Chrome installé par puppeteer
       let executablePath;
       if (isProduction) {
-        const { executablePath: ep } = require('puppeteer');
-        const candidatePath = await ep();
-        console.log('🔎 Chrome path candidate:', candidatePath, fs.existsSync(candidatePath));
+        let candidatePath = null;
+        try {
+          const puppeteerCore = require('puppeteer');
+          if (typeof puppeteerCore.executablePath === 'function') {
+            candidatePath = puppeteerCore.executablePath();
+          } else {
+            candidatePath = puppeteerCore.executablePath || null;
+          }
+        } catch (e) {
+          candidatePath = null;
+        }
+        console.log('🔎 Chrome path candidate:', candidatePath, candidatePath && fs.existsSync(candidatePath));
 
-        const fallbackPaths = [
-          candidatePath,
-          path.resolve(process.cwd(), (process.env.PUPPETEER_CACHE_DIR || '.cache'), 'puppeteer/chrome/linux-149.0.7827.22/chrome-linux64/chrome'),
-          path.resolve(process.cwd(), '.cache/puppeteer/chrome/linux-149.0.7827.22/chrome-linux64/chrome'),
-          path.resolve(process.cwd(), 'node_modules/puppeteer/.local-chromium/linux-149.0.7827.22/chrome-linux64/chrome'),
-        ];
+        const commonCacheDirs = [
+          process.env.PUPPETEER_CACHE_DIR,
+          path.resolve(process.cwd(), process.env.PUPPETEER_CACHE_DIR || '.cache'),
+          '/opt/render/.cache',
+          path.resolve(require('os').homedir(), '.cache', 'puppeteer'),
+        ].filter(Boolean);
 
-        executablePath = fallbackPaths.find(p => p && fs.existsSync(p));
-        console.log('🔎 Chrome fallback results:', fallbackPaths.map(p => ({ path: p, exists: p && fs.existsSync(p) })));
+        const fallbackPaths = [candidatePath];
+        for (const dir of commonCacheDirs) {
+          fallbackPaths.push(path.resolve(dir, 'puppeteer', 'chrome', 'linux-149.0.7827.22', 'chrome-linux64', 'chrome'));
+          fallbackPaths.push(path.resolve(dir, '.local-chromium', 'linux-149.0.7827.22', 'chrome-linux64', 'chrome'));
+          fallbackPaths.push(path.resolve(dir, 'chrome', 'linux-149.0.7827.22', 'chrome-linux64', 'chrome'));
+          fallbackPaths.push(path.resolve(dir));
+        }
+
+        // Remove null/undefined and duplicates
+        const uniquePaths = [...new Set(fallbackPaths.filter(Boolean))];
+
+        executablePath = uniquePaths.find(p => p && fs.existsSync(p));
+        console.log('🔎 Chrome fallback results:', uniquePaths.map(p => ({ path: p, exists: p && fs.existsSync(p) })));
 
         if (!executablePath) {
           console.log('⚠️ Aucun binaire Chrome trouvé en production, Puppeteer utilisera son exécutable par défaut si possible.');
