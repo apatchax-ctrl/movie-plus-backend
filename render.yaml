@@ -2,7 +2,7 @@ services:
   - type: web
     name: movie-plus-backend
     env: node
-    buildCommand: npm install
+    buildCommand: npm install && npx puppeteer browsers install chrome
     startCommand: node src/index.js
     envVars:
       - key: NODE_ENV
