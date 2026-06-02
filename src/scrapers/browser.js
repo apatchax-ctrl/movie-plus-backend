@@ -38,7 +38,7 @@ class BrowserManager {
       let executablePath;
       if (isProduction) {
         const { executablePath: ep } = require('puppeteer');
-        executablePath = ep();
+        executablePath = await ep();
         console.log('🔎 Chrome path:', executablePath);
       } else {
         const paths = [
