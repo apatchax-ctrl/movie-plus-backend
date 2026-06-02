@@ -39,7 +39,15 @@ class BrowserManager {
       if (isProduction) {
         const { executablePath: ep } = require('puppeteer');
         executablePath = await ep();
-        console.log('🔎 Chrome path:', executablePath);
+        console.log('🔎 Chrome path candidate:', executablePath);
+        if (!fs.existsSync(executablePath)) {
+          const fallback = './.cache/puppeteer/chrome/linux-149.0.7827.22/chrome-linux64/chrome';
+          console.log('⚠️ Chrome path introuvable, test fallback:', fallback, fs.existsSync(fallback));
+          if (fs.existsSync(fallback)) executablePath = fallback;
+        }
+        if (!executablePath || !fs.existsSync(executablePath)) {
+          throw new Error('Chrome non trouvé en production');
+        }
       } else {
         const paths = [
           'C:\\Users\\apatcha\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
