@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { HEADERS } = require('../config');
@@ -38,15 +39,21 @@ class BrowserManager {
       let executablePath;
       if (isProduction) {
         const { executablePath: ep } = require('puppeteer');
-        executablePath = await ep();
-        console.log('🔎 Chrome path candidate:', executablePath);
-        if (!fs.existsSync(executablePath)) {
-          const fallback = './.cache/puppeteer/chrome/linux-149.0.7827.22/chrome-linux64/chrome';
-          console.log('⚠️ Chrome path introuvable, test fallback:', fallback, fs.existsSync(fallback));
-          if (fs.existsSync(fallback)) executablePath = fallback;
-        }
-        if (!executablePath || !fs.existsSync(executablePath)) {
-          throw new Error('Chrome non trouvé en production');
+        const candidatePath = await ep();
+        console.log('🔎 Chrome path candidate:', candidatePath, fs.existsSync(candidatePath));
+
+        const fallbackPaths = [
+          candidatePath,
+          path.resolve(process.cwd(), (process.env.PUPPETEER_CACHE_DIR || '.cache'), 'puppeteer/chrome/linux-149.0.7827.22/chrome-linux64/chrome'),
+          path.resolve(process.cwd(), '.cache/puppeteer/chrome/linux-149.0.7827.22/chrome-linux64/chrome'),
+          path.resolve(process.cwd(), 'node_modules/puppeteer/.local-chromium/linux-149.0.7827.22/chrome-linux64/chrome'),
+        ];
+
+        executablePath = fallbackPaths.find(p => p && fs.existsSync(p));
+        console.log('🔎 Chrome fallback results:', fallbackPaths.map(p => ({ path: p, exists: p && fs.existsSync(p) })));
+
+        if (!executablePath) {
+          console.log('⚠️ Aucun binaire Chrome trouvé en production, Puppeteer utilisera son exécutable par défaut si possible.');
         }
       } else {
         const paths = [
@@ -58,9 +65,8 @@ class BrowserManager {
         if (!executablePath) throw new Error('Chrome non trouvé');
       }
 
-      this.browser = await puppeteer.launch({
+      const launchOptions = {
         headless: 'new',
-        executablePath,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -73,7 +79,16 @@ class BrowserManager {
           '--lang=fr-FR',
         ],
         ignoreHTTPSErrors: true,
-      });
+      };
+
+      if (executablePath) {
+        console.log('ℹ️ Using Chrome executable at:', executablePath);
+        launchOptions.executablePath = executablePath;
+      } else {
+        console.log('ℹ️ No explicit Chrome executable provided; letting Puppeteer manage the browser binary.');
+      }
+
+      this.browser = await puppeteer.launch(launchOptions);
 
       console.log('✅ Puppeteer prêt');
       return this.browser;
