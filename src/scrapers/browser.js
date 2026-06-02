@@ -15,46 +15,49 @@ class BrowserManager {
   async getBrowser() {
     if (this.browser) {
       try {
-        const pages = await this.browser.pages();
-        if (pages !== null) return this.browser;
+        await this.browser.pages();
+        return this.browser;
       } catch {
         this.browser = null;
       }
     }
+
     if (this.launching) {
-      // Attendre que le lancement en cours se termine
       await new Promise(r => setTimeout(r, 2000));
       return this.getBrowser();
     }
+
     this.launching = true;
+
     try {
       console.log('🚀 Lancement de Puppeteer...');
-      const isProduction = process.env.NODE_ENV === 'production';
-      let executablePath;
 
+      const isProduction = process.env.NODE_ENV === 'production';
+
+      // En production, trouver Chrome installé par puppeteer
+      let executablePath;
       if (isProduction) {
-        // Sur Render (Linux), utiliser le Chrome stocké dans le cache Puppeteer
-        executablePath = '/opt/render/.cache/puppeteer/chrome/linux-149.0.7827.22/chrome-linux64/chrome';
+        const { executablePath: ep } = require('puppeteer');
+        executablePath = ep();
+        console.log('🔎 Chrome path:', executablePath);
       } else {
-        // Sur Windows local
         const paths = [
           'C:\\Users\\apatcha\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
           'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
           'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
         ];
-        executablePath = paths.find(p => fs.existsSync(p));
-        if (!executablePath) throw new Error('Chrome non trouvé, installe Google Chrome');
+        executablePath = paths.find(p => require('fs').existsSync(p));
+        if (!executablePath) throw new Error('Chrome non trouvé');
       }
 
-      const launchOptions = {
+      this.browser = await puppeteer.launch({
         headless: 'new',
+        executablePath,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
           '--disable-gpu',
-          '--window-size=1366,768',
           '--single-process',
           '--no-zygote',
           '--disable-features=IsolateOrigins,site-per-process',
@@ -62,16 +65,11 @@ class BrowserManager {
           '--lang=fr-FR',
         ],
         ignoreHTTPSErrors: true,
-      };
-      if (executablePath) launchOptions.executablePath = executablePath;
-
-      this.browser = await puppeteer.launch(launchOptions);
-      this.browser.on('disconnected', () => {
-        console.log('⚠️ Browser déconnecté, réinitialisation...');
-        this.browser = null;
       });
+
       console.log('✅ Puppeteer prêt');
       return this.browser;
+
     } finally {
       this.launching = false;
     }
