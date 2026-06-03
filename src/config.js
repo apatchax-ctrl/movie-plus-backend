@@ -13,17 +13,32 @@ module.exports = {
 
   // URLs exactes de fs17.lol découvertes par analyse du site
   URLS: {
-    home:           '/',
-    homePage2:      '/index.php?cstart=',       // + numéro page ex: cstart=2
-    allFilms:       '/index.php?category=films&do=cat',
-    allFilmsPage:   '/index.php?category=films&do=cat&cstart=', // + numéro
-    frenchFilms:    '/xfsearch/pays/Fran%C3%A7ais/',
-    frenchFilmsPage:'/xfsearch/pays/Fran%C3%A7ais/',           // + page/2/
-    genreBase:      '/xfsearch/genre/',         // + NomGenre/
-    genrePage:      '/xfsearch/genre/',         // + NomGenre/page/2/
-    search:         '/?do=search&subaction=search&search_start=0&full_search=0&result_from=1&story=',
-    filmBase:       '/',                         // + ID-titre.html  ex: /16550-pacific-rim.html
-    linkDecoder:    '/link/',                    // + code_base64
+    home:        '/films/',
+    homePage:    '/films/page/',      // + numéro ex: /films/page/2/
+    allFilms:    '/films/',
+    frenchFilms: '/xfsearch/lang/Fran%C3%A7ais/',
+    frenchPage:  '/xfsearch/lang/Fran%C3%A7ais/page/',
+    genreBase:   '/films/',           // + genre ex: /films/actions/
+    search:      '/?do=search&subaction=search&story=',
+  },
+
+  GENRES_URLS: {
+    action:         '/films/actions/',
+    aventure:       '/films/aventures/',
+    animation:      '/films/animations/',
+    comedie:        '/films/comedies/',
+    drame:          '/films/drames/',
+    horreur:        '/films/epouvante-horreurs/',
+    historique:     '/films/historiques/',
+    famille:        '/films/familles/',
+    fantastique:    '/films/fantastiques/',
+    policier:       '/films/policiers/',
+    romance:        '/films/romances/',
+    thriller:       '/films/thrillers/',
+    'science-fiction': '/films/science-fictions/',
+    western:        '/films/westerns/',
+    guerre:         '/films/guerres/',
+    espionnage:     '/films/espionnages/',
   },
 
   // Genres disponibles sur fs17.lol

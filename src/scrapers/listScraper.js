@@ -41,18 +41,53 @@ async function scrapeList(url, maxPages = 1) {
 
 // Films français spécifiquement
 async function scrapeFrenchFilms(maxPages = 3) {
-  const url = BASE_URL + URLS.frenchFilms;
-  console.log('🇫🇷 Scraping films français...');
-  return await scrapeList(url, maxPages);
+  const { BASE_URL, URLS } = require('../config');
+  const allFilms = [];
+  const seen = new Set();
+
+  for (let i = 1; i <= maxPages; i++) {
+    const url = i === 1
+      ? BASE_URL + URLS.frenchFilms
+      : BASE_URL + URLS.frenchPage + i + '/';
+    
+    const films = await scrapePage(url);
+    for (const film of films) {
+      if (!seen.has(film.id)) {
+        seen.add(film.id);
+        allFilms.push(film);
+      }
+    }
+    if (films.length === 0) break;
+    await randomDelay(1000, 2000);
+  }
+  return allFilms;
 }
 
 // Films par genre
 async function scrapeByGenre(genre, maxPages = 2) {
-  // Capitalize first letter
-  const g = genre.charAt(0).toUpperCase() + genre.slice(1).toLowerCase();
-  const url = `${BASE_URL}${URLS.genreBase}${encodeURIComponent(g)}/`;
-  console.log(`🎬 Scraping genre: ${g}`);
-  return await scrapeList(url, maxPages);
+  const { BASE_URL, GENRES_URLS } = require('../config');
+  const genreUrl = GENRES_URLS[genre.toLowerCase()];
+  if (!genreUrl) return [];
+  
+  const allFilms = [];
+  const seen = new Set();
+
+  for (let i = 1; i <= maxPages; i++) {
+    const url = i === 1
+      ? BASE_URL + genreUrl
+      : BASE_URL + genreUrl + 'page/' + i + '/';
+    
+    const films = await scrapePage(url);
+    for (const film of films) {
+      if (!seen.has(film.id)) {
+        seen.add(film.id);
+        allFilms.push(film);
+      }
+    }
+    if (films.length === 0) break;
+    await randomDelay(1000, 2000);
+  }
+  return allFilms;
 }
 
 // Tous les films (page principale de la catégorie)
