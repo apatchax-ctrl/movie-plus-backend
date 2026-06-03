@@ -58,6 +58,44 @@ router.get('/films/genres', (req, res) => {
   res.json({ success: true, data: GENRES });
 });
 
+router.get('/films/debug', async (req, res) => {
+  const browserManager = require('../scrapers/browser');
+  const { randomDelay } = require('../utils/helpers');
+  const { BASE_URL } = require('../config');
+  
+  const page = await browserManager.newPage(false);
+  try {
+    await page.goto(BASE_URL, {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
+    await randomDelay(2000, 3000);
+    
+    const result = await page.evaluate(() => {
+      // Retourne les 50 premiers liens de la page
+      const links = [...document.querySelectorAll('a[href]')]
+        .map(a => ({ href: a.getAttribute('href'), text: a.textContent.trim().substring(0, 50) }))
+        .filter(l => l.href && l.href.length > 1)
+        .slice(0, 50);
+      
+      // Retourne aussi toutes les classes CSS utilisées
+      const classes = [...new Set(
+        [...document.querySelectorAll('[class]')]
+          .map(el => el.className)
+          .filter(c => c && c.length < 50)
+      )].slice(0, 50);
+      
+      return { links, classes, title: document.title };
+    });
+
+    res.json({ success: true, data: result });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  } finally {
+    await browserManager.closePage(page);
+  }
+});
+
 // GET /api/films/genre/:genre
 router.get('/films/genre/:genre', cacheMiddleware(CACHE.LIST), async (req, res) => {
   try {
