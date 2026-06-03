@@ -11,46 +11,47 @@ async function scrapePage(url) {
     await randomDelay(500, 1500);
     
     await page.goto(url, {
-      waitUntil: 'domcontentloaded',
+      waitUntil: 'networkidle2',
       timeout: 30000
     });
 
-    // Attendre que le contenu principal soit chargé
-    await page.waitForSelector('body', { timeout: 10000 });
-    
-    // Petit délai supplémentaire pour le JS
-    await randomDelay(1000, 2000);
+    await randomDelay(2000, 3000);
 
+    // Debug : affiche le HTML pour voir la vraie structure
+    const html = await page.content();
+    console.log('📄 HTML longueur:', html.length);
+    
+    // Cherche TOUS les liens qui matchent le pattern film
     const extracted = await page.evaluate((baseUrl) => {
       const results = [];
-      
-      // fs17.lol utilise des liens directs vers les films
-      // On cherche tous les liens qui correspondent au pattern /ID-titre.html
-      const links = document.querySelectorAll('a[href]');
       const seen = new Set();
 
-      links.forEach(link => {
+      // fs17.lol : les films sont dans des divs avec class "short-item"
+      // ou dans des liens directs /NNNNN-titre.html
+      const selectors = [
+        '.short-item',
+        '.news-item',
+        '.card',
+        'article',
+        '.item',
+      ];
+
+      const addFilmFromLink = (link) => {
         const href = link.getAttribute('href') || '';
-        // Pattern d'URL film: /12345-titre-du-film.html
         if (!/\/\d+-[a-z0-9\-]+\.html/i.test(href)) return;
         if (seen.has(href)) return;
         seen.add(href);
 
-        // Cherche l'image dans ce lien ou son parent
-        const img = link.querySelector('img') ||
-                    link.closest('.short-item, .news-item, .card, article')?.querySelector('img');
-        
-        // Cherche le titre
+        const container = link.closest(selectors.join(',')) || link;
+        const img = link.querySelector('img') || container.querySelector('img');
         const titleEl = link.querySelector('.short-title, .title, h2, h3, .name') ||
-                        link.closest('.short-item, .news-item, .card, article')?.querySelector('.short-title, h2, h3, .title');
-
-        // Cherche le badge qualité
+                        container.querySelector('.short-title, .title, h2, h3, .name');
         const badgeEl = link.querySelector('.short-type, .badge, .quality, .type') ||
-                        link.closest('.short-item, .news-item, .card, article')?.querySelector('.short-type, .badge, .quality');
+                        container.querySelector('.short-type, .badge, .quality, .type');
 
         const fullUrl = href.startsWith('http') ? href : baseUrl + href;
         const idMatch = href.match(/\/(\d+)-/);
-        
+
         results.push({
           id: idMatch ? idMatch[1] : null,
           title: titleEl?.textContent?.trim() || link.getAttribute('title') || link.textContent?.trim() || null,
@@ -58,7 +59,18 @@ async function scrapePage(url) {
           quality: badgeEl?.textContent?.trim() || null,
           pageUrl: fullUrl,
         });
+      };
+
+      selectors.forEach(selector => {
+        const nodes = document.querySelectorAll(selector);
+        nodes.forEach(node => {
+          const link = node.querySelector('a[href]');
+          if (link) addFilmFromLink(link);
+        });
       });
+
+      const links = Array.from(document.querySelectorAll('a[href]'));
+      links.forEach(link => addFilmFromLink(link));
 
       return results;
     }, BASE_URL);
