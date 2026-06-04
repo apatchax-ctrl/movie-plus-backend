@@ -64,28 +64,67 @@ router.get('/films/debug', async (req, res) => {
   const { BASE_URL } = require('../config');
 
   const page = await browserManager.newPage(false);
+  const networkRequests = [];
+
   try {
+    // Intercepte TOUTES les requêtes réseau
+    await page.setRequestInterception(true);
+    page.on('request', req => {
+      networkRequests.push({
+        url: req.url().substring(0, 150),
+        type: req.resourceType(),
+        method: req.method(),
+      });
+      req.continue();
+    });
+
     await page.goto(BASE_URL + '/films/', {
       waitUntil: 'networkidle2',
       timeout: 60000
     });
 
-    try {
-      await page.waitForSelector('.short-item', { timeout: 15000 });
-    } catch { }
+    await randomDelay(5000, 6000);
 
+    // Scroll pour forcer le chargement
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await randomDelay(3000, 4000);
 
     const result = await page.evaluate(() => {
       return {
         shortItems: document.querySelectorAll('.short-item').length,
-        bodyHtml: document.body.innerHTML.substring(0, 3000),
-        title: document.title,
-        url: window.location.href,
+        allDivClasses: [...new Set(
+          [...document.querySelectorAll('div[class]')]
+            .map(el => el.className)
+            .filter(c => c.length < 60)
+        )].slice(0, 60),
+        bodyLength: document.body.innerHTML.length,
+        // Cherche n'importe quel lien avec une image
+        linksWithImg: [...document.querySelectorAll('a')]
+          .filter(a => a.querySelector('img'))
+          .slice(0, 10)
+          .map(a => ({
+            href: a.getAttribute('href'),
+            imgSrc: a.querySelector('img')?.src,
+            parentClass: a.parentElement?.className,
+          })),
       };
     });
 
-    res.json({ success: true, data: result });
+    // Filtre les requêtes intéressantes (JSON, XHR, fetch)
+    const interestingRequests = networkRequests.filter(r => 
+      r.type === 'xhr' || 
+      r.type === 'fetch' || 
+      r.url.includes('.json') ||
+      r.url.includes('api') ||
+      r.url.includes('ajax')
+    );
+
+    res.json({ 
+      success: true, 
+      data: result,
+      networkRequests: interestingRequests.slice(0, 30),
+      allRequests: networkRequests.slice(0, 50),
+    });
   } catch(e) {
     res.json({ success: false, error: e.message });
   } finally {
