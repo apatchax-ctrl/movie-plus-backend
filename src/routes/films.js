@@ -59,55 +59,37 @@ router.get('/films/genres', (req, res) => {
 });
 
 router.get('/films/debug', async (req, res) => {
-  const axios = require('axios');
-  const cheerio = require('cheerio');
-  const { BASE_URL, HEADERS } = require('../config');
+  const browserManager = require('../scrapers/browser');
+  const { randomDelay } = require('../utils/helpers');
+  const { BASE_URL } = require('../config');
 
+  const page = await browserManager.newPage(false);
   try {
-    const response = await axios.get(BASE_URL + '/films/', {
-      headers: HEADERS,
-      timeout: 30000,
+    await page.goto(BASE_URL + '/films/', {
+      waitUntil: 'networkidle2',
+      timeout: 60000
     });
 
-    const $ = cheerio.load(response.data);
-    
-    // Tous les liens
-    const links = [];
-    $('a[href]').each((i, el) => {
-      if (i > 80) return;
-      links.push({
-        href: $(el).attr('href'),
-        text: $(el).text().trim().substring(0, 40),
-        hasImg: $(el).find('img').length > 0,
-        class: $(el).attr('class') || '',
-      });
+    try {
+      await page.waitForSelector('.short-item', { timeout: 15000 });
+    } catch { }
+
+    await randomDelay(3000, 4000);
+
+    const result = await page.evaluate(() => {
+      return {
+        shortItems: document.querySelectorAll('.short-item').length,
+        bodyHtml: document.body.innerHTML.substring(0, 3000),
+        title: document.title,
+        url: window.location.href,
+      };
     });
 
-    // Toutes les classes
-    const classes = [...new Set(
-      $('[class]').map((i, el) => $(el).attr('class')).get()
-        .filter(c => c && c.length < 40)
-    )].slice(0, 80);
-
-    // Toutes les images
-    const imgs = [];
-    $('img').each((i, el) => {
-      if (i > 20) return;
-      imgs.push({
-        src: $(el).attr('src')?.substring(0, 80),
-        dataSrc: $(el).attr('data-src')?.substring(0, 80),
-        alt: $(el).attr('alt')?.substring(0, 30),
-        parentClass: $(el).parent().attr('class'),
-      });
-    });
-
-    res.json({ 
-      success: true, 
-      htmlLength: response.data.length,
-      data: { links, classes, imgs }
-    });
+    res.json({ success: true, data: result });
   } catch(e) {
     res.json({ success: false, error: e.message });
+  } finally {
+    await browserManager.closePage(page);
   }
 });
 
