@@ -3,122 +3,89 @@ const { BASE_URL } = require('../config');
 const { cleanText, toAbsoluteUrl, formatDuration, formatRating, randomDelay, extractIdFromUrl } = require('../utils/helpers');
 
 async function scrapeFilmDetail(filmUrl) {
-  const page = await browserManager.newPage(false); // false = ne pas bloquer les images
+  const page = await browserManager.newPage(false);
   
   try {
-    console.log(`📄 Détail film: ${filmUrl}`);
+    console.log(`📄 Détail: ${filmUrl}`);
     await randomDelay(500, 1500);
 
     await page.goto(filmUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000
+      waitUntil: 'networkidle2',
+      timeout: 60000
     });
 
-    await page.waitForSelector('body', { timeout: 10000 });
-    await randomDelay(1000, 2000);
+    await randomDelay(2000, 3000);
 
-    const data = await page.evaluate((baseUrl) => {
+    const data = await page.evaluate(() => {
       const get = (sel) => document.querySelector(sel);
       const getAll = (sel) => [...document.querySelectorAll(sel)];
       const text = (sel) => get(sel)?.textContent?.trim() || null;
 
-      // === TITRE ===
-      const title = text('h1') ||
-                    text('.short-title') ||
-                    text('.full-title') ||
-                    text('title')?.replace(' — FRENCH STREAM', '').trim() ||
-                    null;
+      // Titre
+      const title = text('h1.full-title, h1, .film-title, .full-title') ||
+                    document.title.replace(' — FRENCH STREAM', '').trim();
 
-      // === POSTER ===
-      const posterEl = get('.full-poster img, .movie-poster img, .poster img, .short-poster img, img[itemprop="image"]');
+      // Poster
+      const posterEl = get('.full-poster img, .poster img, img[itemprop="image"]');
       const posterUrl = posterEl?.src || posterEl?.getAttribute('data-src') || null;
 
-      // === DESCRIPTION ===
-      const desc = text('.full-text, .description, .short-story, [itemprop="description"], .film-description') ||
-                   text('.full-content p') || null;
+      // Description
+      const desc = text('.full-text, .film-desc, .description, [itemprop="description"]');
 
-      // === MÉTADONNÉES ===
-      // On cherche dans les listes de détails (.full-info, .movie-info, .film-info, etc.)
-      const infoBlock = get('.full-info, .movie-info, .film-info, .details, .short-info') ||
-                        document.body;
-
-      const allText = infoBlock.innerText || '';
-
+      // Infos
+      const allText = document.body.innerText;
       const yearMatch = allText.match(/(\d{4})/);
-      const year = yearMatch ? yearMatch[1] : null;
-
       const durationMatch = allText.match(/(\d+h\s?\d*\s?min|\d+\s?min|\d+h)/i);
-      const duration = durationMatch ? durationMatch[1] : null;
 
-      // === GENRES ===
-      const genreEls = getAll('a[href*="xfsearch/genre"], a[href*="genre"]');
-      const genres = genreEls.map(el => el.textContent.trim()).filter(Boolean);
+      // Genres
+      const genres = getAll('a[href*="/films/"], a[href*="genre"]')
+        .map(a => a.textContent.trim())
+        .filter(t => t.length > 2 && t.length < 20)
+        .slice(0, 5);
 
-      // === RÉALISATEUR & ACTEURS ===
-      const directorEls = getAll('a[href*="xfsearch/realisateur"], a[href*="director"]');
-      const director = directorEls[0]?.textContent?.trim() || null;
-
-      const actorEls = getAll('a[href*="xfsearch/acteur"], a[href*="actor"]');
-      const actors = actorEls.slice(0, 6).map(el => el.textContent.trim()).filter(Boolean);
-
-      // === LANGUE & QUALITÉ ===
-      const langEl = get('.film-lang, .lang, .badge-lang, [class*="lang"]');
-      const language = langEl?.textContent?.trim() || null;
-
-      const qualityEl = get('.film-type, .quality, .badge-type, [class*="type"], [class*="quality"]');
-      const quality = qualityEl?.textContent?.trim() || null;
-
-      // === NOTE ===
-      const ratingEl = get('.vote-result, .rating, .score, [itemprop="ratingValue"]');
-      const rating = ratingEl?.textContent?.trim() || null;
-
-      // === PLAYERS (liens vidéo encodés base64) ===
-      // Format sur fs17.lol : <a href="/link/BASE64_CODE">
-      const playerLinks = getAll('a[href*="/link/"]');
+      // Players — liens /index.php?newsid=X&player=Y
+      const playerLinks = getAll('a[href*="player"], a[href*="lecteur"], .player-btn, .server-btn, a[data-player]');
       const players = playerLinks.map((el, i) => ({
         label: `Serveur ${i + 1}`,
-        linkPath: el.getAttribute('href'),
+        linkPath: el.getAttribute('href') || el.getAttribute('data-player') || '',
       }));
 
-      // === IFRAMES directs (si présents) ===
+      // Iframes directs
       const iframes = getAll('iframe[src]');
       const iframeSources = iframes.map((el, i) => ({
         label: `Lecteur ${i + 1}`,
         src: el.getAttribute('src'),
       }));
 
-      return {
-        title, posterUrl, desc, year, duration,
-        genres, director, actors, language, quality, rating,
-        players, iframeSources,
-      };
-    }, BASE_URL);
+      // Rating
+      const ratingEl = get('.vote-result, .rating, .score');
+      const rating = ratingEl?.textContent?.trim() || null;
 
-    // Nettoyer et formater
+      return {
+        title, posterUrl, desc,
+        year: yearMatch?.[1] || null,
+        duration: durationMatch?.[1] || null,
+        genres, players, iframeSources, rating,
+      };
+    });
+
     return {
-      id: extractIdFromUrl(filmUrl),
+      id: filmUrl.match(/newsid=(\d+)/)?.[1] || '0',
       title: cleanText(data.title),
-      posterUrl: data.posterUrl ? toAbsoluteUrl(data.posterUrl) : null,
+      posterUrl: data.posterUrl,
       description: cleanText(data.desc),
       year: data.year,
-      duration: formatDuration(data.duration),
+      duration: data.duration,
       genres: data.genres,
-      director: data.director,
-      actors: data.actors,
-      language: data.language,
-      quality: data.quality,
       rating: formatRating(data.rating),
       pageUrl: filmUrl,
-      players: data.players.map(p => ({
-        ...p,
-        fullPath: p.linkPath ? BASE_URL + p.linkPath : null,
-      })),
+      players: data.players,
       iframeSources: data.iframeSources,
       source: 'fs17.lol',
     };
 
   } catch (err) {
-    console.error(`❌ Erreur détail ${filmUrl}:`, err.message);
+    console.error(`❌ Erreur détail:`, err.message);
     return null;
   } finally {
     await browserManager.closePage(page);
