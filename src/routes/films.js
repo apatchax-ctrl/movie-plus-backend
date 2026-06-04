@@ -59,40 +59,55 @@ router.get('/films/genres', (req, res) => {
 });
 
 router.get('/films/debug', async (req, res) => {
-  const browserManager = require('../scrapers/browser');
-  const { randomDelay } = require('../utils/helpers');
-  const { BASE_URL } = require('../config');
-  
-  const page = await browserManager.newPage(false);
+  const axios = require('axios');
+  const cheerio = require('cheerio');
+  const { BASE_URL, HEADERS } = require('../config');
+
   try {
-    await page.goto(BASE_URL, {
-      waitUntil: 'networkidle2',
-      timeout: 30000
-    });
-    await randomDelay(2000, 3000);
-    
-    const result = await page.evaluate(() => {
-      // Retourne les 50 premiers liens de la page
-      const links = [...document.querySelectorAll('a[href]')]
-        .map(a => ({ href: a.getAttribute('href'), text: a.textContent.trim().substring(0, 50) }))
-        .filter(l => l.href && l.href.length > 1)
-        .slice(0, 50);
-      
-      // Retourne aussi toutes les classes CSS utilisées
-      const classes = [...new Set(
-        [...document.querySelectorAll('[class]')]
-          .map(el => el.className)
-          .filter(c => c && c.length < 50)
-      )].slice(0, 50);
-      
-      return { links, classes, title: document.title };
+    const response = await axios.get(BASE_URL + '/films/', {
+      headers: HEADERS,
+      timeout: 30000,
     });
 
-    res.json({ success: true, data: result });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  } finally {
-    await browserManager.closePage(page);
+    const $ = cheerio.load(response.data);
+    
+    // Tous les liens
+    const links = [];
+    $('a[href]').each((i, el) => {
+      if (i > 80) return;
+      links.push({
+        href: $(el).attr('href'),
+        text: $(el).text().trim().substring(0, 40),
+        hasImg: $(el).find('img').length > 0,
+        class: $(el).attr('class') || '',
+      });
+    });
+
+    // Toutes les classes
+    const classes = [...new Set(
+      $('[class]').map((i, el) => $(el).attr('class')).get()
+        .filter(c => c && c.length < 40)
+    )].slice(0, 80);
+
+    // Toutes les images
+    const imgs = [];
+    $('img').each((i, el) => {
+      if (i > 20) return;
+      imgs.push({
+        src: $(el).attr('src')?.substring(0, 80),
+        dataSrc: $(el).attr('data-src')?.substring(0, 80),
+        alt: $(el).attr('alt')?.substring(0, 30),
+        parentClass: $(el).parent().attr('class'),
+      });
+    });
+
+    res.json({ 
+      success: true, 
+      htmlLength: response.data.length,
+      data: { links, classes, imgs }
+    });
+  } catch(e) {
+    res.json({ success: false, error: e.message });
   }
 });
 

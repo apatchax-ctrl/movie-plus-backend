@@ -1,124 +1,87 @@
-const browserManager = require('./browser');
-const { BASE_URL, URLS } = require('../config');
-const { cleanText, extractIdFromUrl, toAbsoluteUrl, randomDelay } = require('../utils/helpers');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const { BASE_URL, HEADERS } = require('../config');
+const { cleanText, toAbsoluteUrl, randomDelay } = require('../utils/helpers');
 
 async function scrapePage(url) {
-  const page = await browserManager.newPage(true);
-  const films = [];
-  
   try {
-    console.log(`🔍 Scraping: ${url}`);
+    console.log(`🔍 Scraping avec axios: ${url}`);
     await randomDelay(500, 1500);
-    
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: 30000
+
+    const response = await axios.get(url, {
+      headers: {
+        ...HEADERS,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+      timeout: 30000,
     });
 
-    await randomDelay(2000, 3000);
+    const $ = cheerio.load(response.data);
+    const films = [];
+    const seen = new Set();
 
-    // Debug : affiche le HTML pour voir la vraie structure
-    const html = await page.content();
-    console.log('📄 HTML longueur:', html.length);
-    
-    const extracted = await page.evaluate(() => {
-      const results = [];
-      const seen = new Set();
+    console.log(`📄 HTML reçu: ${response.data.length} caractères`);
 
-      // Sur fs17.lol les films sont dans des divs.short-item
-      // avec des liens /ANNEE/TITRE/ ou /ID-TITRE.html
-      const items = document.querySelectorAll(
-        '.short-item, .movie-item, .th-item, .item-films, article.item'
-      );
+    // Cherche tous les liens films
+    // Sur fs17.lol les films ont des URLs comme /titre-film-2024/
+    $('a[href]').each((i, el) => {
+      const href = $(el).attr('href') || '';
+      
+      // Pattern URL film : /mot-mot-ANNEE/ ou /mot-mot-ANNEE.html
+      if (!href.match(/\/[a-z0-9][a-z0-9-]+-(?:19|20)\d{2}\/?(?:\.html)?$/i)) return;
+      if (seen.has(href)) return;
+      seen.add(href);
 
-      items.forEach(item => {
-        const link = item.querySelector('a[href]');
-        const img = item.querySelector('img');
-        const titleEl = item.querySelector(
-          '.short-title, .title, h2, h3, .movie-title, .name'
-        );
-        const qualityEl = item.querySelector(
-          '.short-type, .quality, .badge, .label'
-        );
+      // Cherche l'image
+      const img = $(el).find('img').first();
+      const imgSrc = img.attr('data-src') || img.attr('data-original') || img.attr('src') || '';
 
-        const href = link?.getAttribute('href') || '';
-        if (!href || seen.has(href)) return;
-        seen.add(href);
+      // Cherche le titre
+      const titleEl = $(el).find('.short-title, .title, h2, h3').first();
+      const title = titleEl.text().trim() || 
+                    $(el).attr('title') || 
+                    $(el).text().trim() || '';
 
-        results.push({
-          href,
-          title: titleEl?.textContent?.trim() ||
-                 link?.getAttribute('title') || '',
-          poster: img?.getAttribute('data-src') ||
-                  img?.getAttribute('data-original') ||
-                  img?.src || '',
-          quality: qualityEl?.textContent?.trim() || '',
-        });
-      });
+      // Cherche la qualité
+      const quality = $(el).find('.short-type, .quality, .badge, .label').text().trim();
 
-      // Fallback : cherche tous les liens avec pattern /films/
-      if (results.length === 0) {
-        document.querySelectorAll('a[href]').forEach(link => {
-          const href = link.getAttribute('href') || '';
-          // Pattern URLs films fs17.lol : /titre-film-ANNEE/ ou contient des chiffres
-          if (!href.match(/\/[a-z0-9-]+-(?:19|20)\d{2}\/?$/) &&
-              !href.match(/\/\d{4,}-/)) return;
-          if (seen.has(href)) return;
-          seen.add(href);
+      // Extrait l'année depuis l'URL
+      const yearMatch = href.match(/-((?:19|20)\d{2})\/?(?:\.html)?$/);
+      const year = yearMatch ? yearMatch[1] : null;
 
-          const img = link.querySelector('img') ||
-                      link.closest('div, article')?.querySelector('img');
-          results.push({
-            href,
-            title: link.getAttribute('title') ||
-                   link.textContent?.trim() || '',
-            poster: img?.getAttribute('data-src') || img?.src || '',
-            quality: '',
-          });
-        });
-      }
+      // Génère un ID depuis l'URL
+      const id = href.replace(/[^a-z0-9]/gi, '-').replace(/-+/g, '-').substring(0, 50);
 
-      return results;
-    });
-
-    // Filtrer les résultats valides
-    for (const film of extracted) {
-      const href = film.href || '';
-      const pageUrl = href.startsWith('http') ? href : BASE_URL + href;
-      const id = extractIdFromUrl(href) || null;
-      if (id && pageUrl) {
+      if (title.length > 1) {
         films.push({
           id,
-          title: cleanText(film.title) || `Film #${id}`,
-          posterUrl: film.poster ? toAbsoluteUrl(film.poster) : null,
-          quality: cleanText(film.quality),
-          pageUrl,
+          title: cleanText(title),
+          posterUrl: imgSrc ? toAbsoluteUrl(imgSrc) : null,
+          quality: cleanText(quality) || null,
+          year,
+          pageUrl: href.startsWith('http') ? href : BASE_URL + href,
           source: 'fs17.lol',
         });
       }
-    }
+    });
 
     console.log(`✅ ${films.length} films trouvés sur ${url}`);
     return films;
 
   } catch (err) {
-    console.error(`❌ Erreur scraping ${url}:`, err.message);
+    console.error(`❌ Erreur axios ${url}:`, err.message);
     return [];
-  } finally {
-    await browserManager.closePage(page);
   }
 }
 
-// Scrape la page d'accueil (plusieurs pages pour avoir plus de films)
 async function scrapeHome(maxPages = 2) {
   const allFilms = [];
   const seen = new Set();
-  const { BASE_URL, URLS } = require('../config');
 
   for (let i = 1; i <= maxPages; i++) {
     const url = i === 1
-      ? BASE_URL + URLS.home
-      : BASE_URL + URLS.homePage + i + '/';
+      ? BASE_URL + '/films/'
+      : BASE_URL + '/films/page/' + i + '/';
     
     const films = await scrapePage(url);
     for (const film of films) {
