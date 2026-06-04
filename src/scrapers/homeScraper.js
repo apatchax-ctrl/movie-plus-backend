@@ -1,6 +1,6 @@
 const browserManager = require('./browser');
 const { BASE_URL } = require('../config');
-const { cleanText, toAbsoluteUrl, randomDelay } = require('../utils/helpers');
+const { cleanText, randomDelay } = require('../utils/helpers');
 
 async function scrapePage(url) {
   const page = await browserManager.newPage(false);
@@ -14,71 +14,63 @@ async function scrapePage(url) {
       timeout: 60000
     });
 
-    // Attendre que les films apparaissent
-    try {
-      await page.waitForSelector('.short-item', { timeout: 15000 });
-      console.log('✅ .short-item trouvé !');
-    } catch {
-      console.log('⚠️ .short-item pas trouvé, on essaie quand même');
-    }
-
-    // Attendre encore un peu
     await randomDelay(3000, 5000);
 
-    // Screenshot pour voir ce que Puppeteer voit réellement
-    const screenshot = await page.screenshot({ encoding: 'base64' });
-    console.log('📸 Screenshot pris, longueur:', screenshot.length);
-
-    const extracted = await page.evaluate(() => {
-      const items = document.querySelectorAll('.short-item');
-      console.log('Items trouvés:', items.length);
-      
+    const extracted = await page.evaluate((baseUrl) => {
       const results = [];
+      const seen = new Set();
+
+      // Les films sont dans .short-in avec liens /index.php?newsid=ID
+      const items = document.querySelectorAll('.short-in');
+      
       items.forEach(item => {
-        const link = item.querySelector('a[href]');
+        const link = item.querySelector('a[href*="newsid"]');
         const img = item.querySelector('img');
-        const title = item.querySelector('.short-title, h2, h3, .title');
-        const quality = item.querySelector('.short-type, .quality, .badge');
+        const titleEl = item.querySelector('.short-title');
+
+        const href = link?.getAttribute('href') || '';
+        if (!href || seen.has(href)) return;
+        seen.add(href);
+
+        // Extrait l'ID depuis newsid=
+        const idMatch = href.match(/newsid=(\d+)/);
+        if (!idMatch) return;
+
+        const title = titleEl?.textContent?.trim() ||
+                      img?.getAttribute('alt')?.replace(' affiche', '').trim() || '';
+
+        const posterUrl = img?.src || 
+                          img?.getAttribute('data-src') || '';
+
+        const qualityEl = item.querySelector('.short-type, .quality, .label, .badge');
 
         results.push({
-          href: link?.getAttribute('href') || '',
-          title: title?.textContent?.trim() || img?.getAttribute('alt')?.replace(' affiche','').trim() || '',
-          poster: img?.src || img?.getAttribute('data-src') || '',
-          quality: quality?.textContent?.trim() || '',
-          html: item.innerHTML.substring(0, 200),
+          id: idMatch[1],
+          title,
+          posterUrl,
+          quality: qualityEl?.textContent?.trim() || '',
+          pageUrl: href.startsWith('http') ? href : baseUrl + href,
         });
       });
 
-      // Si pas de .short-item, retourne le body text pour debug
-      if (results.length === 0) {
-        return { 
-          results: [],
-          debug: document.body.innerHTML.substring(0, 2000),
-          itemCount: items.length,
-        };
+      return results;
+    }, BASE_URL);
+
+    console.log(`✅ ${extracted.length} films trouvés`);
+
+    for (const item of extracted) {
+      if (item.id && item.title) {
+        films.push({
+          id: item.id,
+          title: cleanText(item.title),
+          posterUrl: item.posterUrl || null,
+          quality: item.quality || null,
+          pageUrl: item.pageUrl,
+          source: 'fs17.lol',
+        });
       }
-
-      return { results, debug: null, itemCount: items.length };
-    });
-
-    console.log(`📊 Items trouvés: ${extracted.itemCount}`);
-    if (extracted.debug) {
-      console.log('🔍 DEBUG HTML:', extracted.debug.substring(0, 500));
     }
 
-    for (const item of extracted.results || []) {
-      if (!item.href) continue;
-      films.push({
-        id: item.href.replace(/[^a-z0-9]/gi, '-').substring(0, 50),
-        title: cleanText(item.title) || 'Film inconnu',
-        posterUrl: item.poster || null,
-        quality: item.quality || null,
-        pageUrl: item.href.startsWith('http') ? item.href : BASE_URL + item.href,
-        source: 'fs17.lol',
-      });
-    }
-
-    console.log(`✅ ${films.length} films valides`);
     return films;
 
   } catch (err) {
