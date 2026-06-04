@@ -101,15 +101,29 @@ async function start() {
       console.log(`🎬 Movie Plus API démarré → http://localhost:${PORT}`);
     });
 
-    setTimeout(async () => {
+    // Préchauffage immédiat au démarrage
+    async function warmupCache() {
       try {
-        console.log('🔥 Préchauffage du cache...');
-        const home = await scrapeHome(1);
-        console.log(`📦 Cache préchauffé: ${home.total} films`);
-      } catch (e) {
-        console.log('⚠️ Préchauffage échoué');
+        console.log('🔥 Préchauffage cache...');
+        const { scrapeHome } = require('./scrapers/homeScraper');
+        const { scrapeFrenchFilms } = require('./scrapers/listScraper');
+        const { setCache } = require('./middleware/cache');
+
+        const home = await scrapeHome(2);
+        setCache('route_/api/films/home', { success: true, data: home }, 1800);
+        console.log(`✅ Home cachée: ${home.total} films`);
+
+        const french = await scrapeFrenchFilms(2);
+        setCache('route_/api/films/french', { success: true, data: french, total: french.length }, 3600);
+        console.log(`✅ Français cachés: ${french.length} films`);
+
+      } catch(e) {
+        console.log('⚠️ Préchauffage échoué:', e.message);
       }
-    }, 5000);
+    }
+
+    // Lance le préchauffage 3 secondes après démarrage
+    setTimeout(warmupCache, 3000);
 
   } catch (err) {
     console.error('❌ Erreur démarrage:', err);
