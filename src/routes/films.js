@@ -198,4 +198,83 @@ router.delete('/films/cache/flush', (req, res) => {
   res.json({ success: true, message: 'Cache vidé' });
 });
 
+// ─── DEBUG PLAYER ───────────────────────────────────────
+// GET /api/films/player-debug?url=...
+router.get('/films/player-debug', async (req, res) => {
+  const browserManager = require('../scrapers/browser');
+  const { randomDelay } = require('../utils/helpers');
+  
+  const page = await browserManager.newPage(false);
+  try {
+    const url = req.query.url || 'https://fs17.lol/index.php?newsid=15126941';
+    
+    await page.goto(url, {
+      waitUntil: 'networkidle2',
+      timeout: 60000
+    });
+    await randomDelay(3000, 4000);
+
+    const result = await page.evaluate(() => {
+      // Cherche TOUT ce qui ressemble à un player
+      const iframes = [...document.querySelectorAll('iframe')]
+        .map(el => ({
+          src: el.src,
+          dataSrc: el.getAttribute('data-src'),
+          id: el.id,
+          class: el.className,
+        }));
+
+      const allLinks = [...document.querySelectorAll('a[href]')]
+        .filter(a => {
+          const href = a.href || '';
+          return href.includes('player') || 
+                 href.includes('embed') || 
+                 href.includes('stream') ||
+                 href.includes('video') ||
+                 href.includes('watch') ||
+                 href.includes('lecteur') ||
+                 a.className.includes('player') ||
+                 a.className.includes('server') ||
+                 a.className.includes('btn');
+        })
+        .map(a => ({
+          href: a.href,
+          text: a.textContent.trim().substring(0, 30),
+          class: a.className,
+          dataId: a.getAttribute('data-id'),
+          dataFile: a.getAttribute('data-file'),
+          dataPlayer: a.getAttribute('data-player'),
+        }));
+
+      const scripts = [...document.querySelectorAll('script')]
+        .map(s => s.innerHTML)
+        .filter(s => s.includes('player') || 
+                     s.includes('file') || 
+                     s.includes('source') ||
+                     s.includes('jwplayer') ||
+                     s.includes('video'))
+        .map(s => s.substring(0, 300))
+        .slice(0, 5);
+
+      const allClasses = [...new Set(
+        [...document.querySelectorAll('[class]')]
+          .map(el => el.className)
+          .filter(c => c && c.length < 40 &&
+            (c.includes('player') || c.includes('server') || 
+             c.includes('video') || c.includes('stream') ||
+             c.includes('btn') || c.includes('tab')))
+      )];
+
+      return { iframes, allLinks, scripts, allClasses,
+               bodyLength: document.body.innerHTML.length };
+    });
+
+    res.json({ success: true, data: result });
+  } catch(e) {
+    res.json({ success: false, error: e.message });
+  } finally {
+    await browserManager.closePage(page);
+  }
+});
+
 module.exports = router;
