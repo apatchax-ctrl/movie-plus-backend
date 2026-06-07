@@ -201,77 +201,105 @@ router.delete('/films/cache/flush', (req, res) => {
 });
 
 // ─── DEBUG PLAYER ───────────────────────────────────────
-// GET /api/films/player-debug?url=...
 router.get('/films/player-debug', async (req, res) => {
   const browserManager = require('../scrapers/browser');
   const { randomDelay } = require('../utils/helpers');
   
   const page = await browserManager.newPage(false);
+  const capturedUrls = [];
+
   try {
     const url = req.query.url || 'https://fs17.lol/index.php?newsid=15126941';
     
+    // Intercepte TOUTES les requêtes
+    await page.setRequestInterception(true);
+    page.on('request', req => {
+      capturedUrls.push({
+        url: req.url().substring(0, 150),
+        type: req.resourceType(),
+      });
+      try { req.continue(); } catch {}
+    });
+
     await page.goto(url, {
       waitUntil: 'networkidle2',
       timeout: 60000
     });
+    
+    await randomDelay(2000, 3000);
+
+    // Cherche les boutons player et clique
+    await page.evaluate(() => {
+      const btns = document.querySelectorAll(
+        '.movie-players a, .ftabs a, .tab-item, ' +
+        '.server-item, [data-file], .player-tab'
+      );
+      if (btns.length > 0) btns[0].click();
+    });
+
     await randomDelay(3000, 4000);
 
     const result = await page.evaluate(() => {
-      // Cherche TOUT ce qui ressemble à un player
+      // Tous les iframes
       const iframes = [...document.querySelectorAll('iframe')]
         .map(el => ({
           src: el.src,
           dataSrc: el.getAttribute('data-src'),
           id: el.id,
           class: el.className,
+          width: el.width,
         }));
 
-      const allLinks = [...document.querySelectorAll('a[href]')]
-        .filter(a => {
-          const href = a.href || '';
-          return href.includes('player') || 
-                 href.includes('embed') || 
-                 href.includes('stream') ||
-                 href.includes('video') ||
-                 href.includes('watch') ||
-                 href.includes('lecteur') ||
-                 a.className.includes('player') ||
-                 a.className.includes('server') ||
-                 a.className.includes('btn');
-        })
-        .map(a => ({
-          href: a.href,
-          text: a.textContent.trim().substring(0, 30),
-          class: a.className,
-          dataId: a.getAttribute('data-id'),
-          dataFile: a.getAttribute('data-file'),
-          dataPlayer: a.getAttribute('data-player'),
-        }));
+      // Contenu de .movie-players
+      const moviePlayers = document.querySelector('.movie-players');
+      const moviePlayersHTML = moviePlayers?.innerHTML?.substring(0, 1000) || 'NON TROUVÉ';
 
+      // Contenu de .video-container
+      const videoContainer = document.querySelector('.video-container');
+      const videoContainerHTML = videoContainer?.innerHTML?.substring(0, 500) || 'NON TROUVÉ';
+
+      // Scripts avec file/source
       const scripts = [...document.querySelectorAll('script')]
         .map(s => s.innerHTML)
-        .filter(s => s.includes('player') || 
-                     s.includes('file') || 
-                     s.includes('source') ||
-                     s.includes('jwplayer') ||
-                     s.includes('video'))
-        .map(s => s.substring(0, 300))
+        .filter(s => s.includes('file') || s.includes('source') || 
+                     s.includes('m3u8') || s.includes('mp4') ||
+                     s.includes('jwplayer') || s.includes('player'))
+        .map(s => s.substring(0, 500))
         .slice(0, 5);
 
-      const allClasses = [...new Set(
-        [...document.querySelectorAll('[class]')]
-          .map(el => el.className)
-          .filter(c => c && c.length < 40 &&
-            (c.includes('player') || c.includes('server') || 
-             c.includes('video') || c.includes('stream') ||
-             c.includes('btn') || c.includes('tab')))
-      )];
+      // Video tags
+      const videos = [...document.querySelectorAll('video, video source')]
+        .map(v => ({ src: v.src, dataSrc: v.getAttribute('data-src') }));
 
-      return { iframes, allLinks, scripts, allClasses,
-               bodyLength: document.body.innerHTML.length };
+      return { 
+        iframes, 
+        moviePlayersHTML,
+        videoContainerHTML,
+        scripts,
+        videos,
+        bodyLength: document.body.innerHTML.length,
+      };
     });
 
-    res.json({ success: true, data: result });
+    // URLs réseau intéressantes
+    const interesting = capturedUrls.filter(r => 
+      r.url.includes('m3u8') || 
+      r.url.includes('mp4') ||
+      r.url.includes('stream') ||
+      r.url.includes('embed') ||
+      r.url.includes('player') ||
+      r.url.includes('video') ||
+      r.type === 'media' ||
+      r.type === 'xhr' ||
+      r.type === 'fetch'
+    );
+
+    res.json({ 
+      success: true, 
+      data: result,
+      networkUrls: interesting,
+      allUrls: capturedUrls.slice(0, 80),
+    });
   } catch(e) {
     res.json({ success: false, error: e.message });
   } finally {
