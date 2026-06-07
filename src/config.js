@@ -63,4 +63,9 @@ module.exports = {
     'sec-ch-ua-mobile': '?0',
     'sec-ch-ua-platform': '"Windows"',
   }
+  ,
+  TMDB_API_KEY: process.env.TMDB_API_KEY,
+  TMDB_BASE_URL: process.env.TMDB_BASE_URL || 'https://api.themoviedb.org/3',
+  TMDB_IMAGE_URL: process.env.TMDB_IMAGE_URL || 'https://image.tmdb.org/t/p/w500',
+  MOVIX_BASE_URL: process.env.MOVIX_BASE_URL || 'https://movix.golf',
 };

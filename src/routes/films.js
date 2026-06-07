@@ -1,179 +1,110 @@
 const express = require('express');
 const router = express.Router();
-const { cacheMiddleware } = require('../middleware/cache');
-const { scrapeHome } = require('../scrapers/homeScraper');
-const { scrapeFrenchFilms, scrapeByGenre, scrapeAllFilms, scrapeRecent } = require('../scrapers/listScraper');
-const { scrapeFilmDetail } = require('../scrapers/detailScraper');
-const { getVideoUrl } = require('../scrapers/playerScraper');
-const { GENRES, CACHE } = require('../config');
-const { decodeUrl } = require('../utils/helpers');
+const { cacheMiddleware, setCache, getCache } = require('../middleware/cache');
+const tmdb = require('../services/tmdbService');
+const { getVideoFromMovix, debugMovix } = require('../scrapers/movixScraper');
+const { CACHE } = require('../config');
 
-// ─── ACCUEIL ───────────────────────────────────────────
+// ── ACCUEIL ──────────────────────────────────────────
 // GET /api/films/home
+// - Charge en parallèle : trending + nowPlaying + topRated
+// - trending = getTrending()
+// - recent = getNowPlaying()
+// - Cache 30 minutes
+// - Retourne { trending, recent, total }
+
 router.get('/films/home', cacheMiddleware(CACHE.HOME), async (req, res) => {
   try {
-    const data = await scrapeHome(2);
-    res.json({ success: true, data });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// GET /api/films/recent
-router.get('/films/recent', cacheMiddleware(CACHE.LIST), async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 20;
-    const films = await scrapeRecent(limit);
-    res.json({ success: true, data: films, total: films.length });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// GET /api/films/all?page=1
-router.get('/films/all', cacheMiddleware(CACHE.LIST), async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const result = await scrapeAllFilms(page);
-    res.json({ success: true, ...result });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// ─── FILMS FRANÇAIS ────────────────────────────────────
-// GET /api/films/french
-router.get('/films/french', cacheMiddleware(CACHE.LIST), async (req, res) => {
-  try {
-    const films = await scrapeFrenchFilms(3);
-    res.json({ success: true, data: films, total: films.length });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// ─── GENRES ────────────────────────────────────────────
-// GET /api/films/genres  → liste des genres disponibles
-router.get('/films/genres', (req, res) => {
-  res.json({ success: true, data: GENRES });
-});
-
-router.get('/films/debug', async (req, res) => {
-  const browserManager = require('../scrapers/browser');
-  const { randomDelay } = require('../utils/helpers');
-  const { BASE_URL } = require('../config');
-
-  const page = await browserManager.newPage(false);
-  const networkRequests = [];
-
-  try {
-    // Intercepte TOUTES les requêtes réseau
-    await page.setRequestInterception(true);
-    page.on('request', req => {
-      networkRequests.push({
-        url: req.url().substring(0, 150),
-        type: req.resourceType(),
-        method: req.method(),
-      });
-      req.continue();
-    });
-
-    await page.goto(BASE_URL + '/films/', {
-      waitUntil: 'networkidle2',
-      timeout: 60000
-    });
-
-    await randomDelay(5000, 6000);
-
-    // Scroll pour forcer le chargement
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await randomDelay(3000, 4000);
-
-    const result = await page.evaluate(() => {
-      return {
-        shortItems: document.querySelectorAll('.short-item').length,
-        allDivClasses: [...new Set(
-          [...document.querySelectorAll('div[class]')]
-            .map(el => el.className)
-            .filter(c => c.length < 60)
-        )].slice(0, 60),
-        bodyLength: document.body.innerHTML.length,
-        // Cherche n'importe quel lien avec une image
-        linksWithImg: [...document.querySelectorAll('a')]
-          .filter(a => a.querySelector('img'))
-          .slice(0, 10)
-          .map(a => ({
-            href: a.getAttribute('href'),
-            imgSrc: a.querySelector('img')?.src,
-            parentClass: a.parentElement?.className,
-          })),
-      };
-    });
-
-    // Filtre les requêtes intéressantes (JSON, XHR, fetch)
-    const interestingRequests = networkRequests.filter(r => 
-      r.type === 'xhr' || 
-      r.type === 'fetch' || 
-      r.url.includes('.json') ||
-      r.url.includes('api') ||
-      r.url.includes('ajax')
-    );
-
+    const [trending, recent, topRated] = await Promise.all([
+      tmdb.getTrending(),
+      tmdb.getNowPlaying(),
+      tmdb.getTopRated(),
+    ]);
     res.json({ 
       success: true, 
-      data: result,
-      networkRequests: interestingRequests.slice(0, 30),
-      allRequests: networkRequests.slice(0, 50),
+      data: { trending, recent, topRated, total: trending.length } 
     });
-  } catch(e) {
-    res.json({ success: false, error: e.message });
-  } finally {
-    await browserManager.closePage(page);
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// GET /api/films/genre/:genre
+// ── FILMS RÉCENTS ─────────────────────────────────────
+router.get('/films/recent', cacheMiddleware(CACHE.LIST), async (req, res) => {
+  try {
+    const films = await tmdb.getNowPlaying();
+    res.json({ success: true, data: films, total: films.length });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── POPULAIRES ────────────────────────────────────────
+router.get('/films/popular', cacheMiddleware(CACHE.LIST), async (req, res) => {
+  try {
+    const films = await tmdb.getPopular();
+    res.json({ success: true, data: films, total: films.length });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── FILMS FRANÇAIS ────────────────────────────────────
+router.get('/films/french', cacheMiddleware(CACHE.LIST), async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const films = await tmdb.getFrenchMovies(page);
+    res.json({ success: true, data: films, total: films.length });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── BOLLYWOOD ─────────────────────────────────────────
+router.get('/films/bollywood', cacheMiddleware(CACHE.LIST), async (req, res) => {
+  try {
+    const films = await tmdb.getBollywoodMovies();
+    res.json({ success: true, data: films, total: films.length });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── PAR GENRE ─────────────────────────────────────────
 router.get('/films/genre/:genre', cacheMiddleware(CACHE.LIST), async (req, res) => {
   try {
-    const genre = req.params.genre;
-    if (!GENRES.map(g => g.toLowerCase()).includes(genre.toLowerCase())) {
-      return res.status(400).json({ success: false, error: `Genre invalide. Valeurs: ${GENRES.join(', ')}` });
-    }
-    const films = await scrapeByGenre(genre, 2);
+    const genre = req.params.genre.toLowerCase();
+    const genreId = tmdb.GENRE_IDS[genre];
+    if (!genreId) return res.status(400).json({ 
+      success: false, 
+      error: `Genre invalide. Valeurs: ${Object.keys(tmdb.GENRE_IDS).join(', ')}` 
+    });
+    const page = parseInt(req.query.page) || 1;
+    const films = await tmdb.getByGenre(genreId, page);
     res.json({ success: true, data: films, genre, total: films.length });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// ─── DÉTAIL FILM ───────────────────────────────────────
-// GET /api/films/detail?url=URL_ENCODEE
-router.get('/films/detail', cacheMiddleware(CACHE.DETAIL), async (req, res) => {
+// ── DÉTAIL FILM ───────────────────────────────────────
+router.get('/films/detail/:tmdbId', cacheMiddleware(CACHE.DETAIL), async (req, res) => {
   try {
-    const { url } = req.query;
-    if (!url) return res.status(400).json({ success: false, error: 'Paramètre url manquant' });
-    const filmUrl = decodeUrl(url);
-    const data = await scrapeFilmDetail(filmUrl);
-    if (!data) return res.status(404).json({ success: false, error: 'Film non trouvé' });
-    res.json({ success: true, data });
+    const film = await tmdb.getMovieDetail(req.params.tmdbId);
+    res.json({ success: true, data: film });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// ─── LIEN VIDÉO ────────────────────────────────────────
-// GET /api/films/video?url=URL_ENCODEE
-router.get('/films/video', cacheMiddleware(CACHE.VIDEO), async (req, res) => {
+// ── LIEN VIDÉO ────────────────────────────────────────
+router.get('/films/video/:tmdbId', cacheMiddleware(CACHE.VIDEO), async (req, res) => {
   try {
-    const { url } = req.query;
-    if (!url) return res.status(400).json({ 
-      success: false, error: 'Paramètre url manquant' 
-    });
-    const filmUrl = decodeURIComponent(url);
-    const { getVideoUrl } = require('../scrapers/playerScraper');
-    const videoData = await getVideoUrl([], [], filmUrl);
+    const { tmdbId } = req.params;
+    const title = req.query.title || '';
+    const videoData = await getVideoFromMovix(tmdbId, title);
     if (!videoData) return res.status(404).json({ 
-      success: false, error: 'Aucun lien vidéo disponible' 
+      success: false, error: 'Vidéo indisponible' 
     });
     res.json({ success: true, data: videoData });
   } catch (e) {
@@ -181,102 +112,29 @@ router.get('/films/video', cacheMiddleware(CACHE.VIDEO), async (req, res) => {
   }
 });
 
-// ─── CACHE ADMIN ───────────────────────────────────────
-// GET /api/films/cache/stats
+// ── GENRES LISTE ──────────────────────────────────────
+router.get('/films/genres', async (req, res) => {
+  try {
+    const genres = await tmdb.getGenres();
+    res.json({ success: true, data: genres });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── CACHE STATS ───────────────────────────────────────
 router.get('/films/cache/stats', (req, res) => {
   const { getStats, getKeys } = require('../middleware/cache');
   res.json({ success: true, stats: getStats(), keys: getKeys().length });
 });
 
-// DELETE /api/films/cache/flush
-router.delete('/films/cache/flush', (req, res) => {
-  const { flushAll } = require('../middleware/cache');
-  flushAll();
-  res.json({ success: true, message: 'Cache vidé' });
-});
-
-// ─── DEBUG PLAYER ───────────────────────────────────────
-router.get('/films/player-debug', async (req, res) => {
-  const browserManager = require('../scrapers/browser');
-  const { randomDelay } = require('../utils/helpers');
-  
-  const page = await browserManager.newPage(false);
-  const capturedUrls = [];
-
+// ── DEBUG MOVIX ───────────────────────────────────────
+router.get('/films/movix-debug/:tmdbId', async (req, res) => {
   try {
-    const url = req.query.url || 'https://fs17.lol/index.php?newsid=15120731';
-    
-    await page.setRequestInterception(true);
-    page.on('request', req => {
-      capturedUrls.push({
-        url: req.url().substring(0, 200),
-        type: req.resourceType(),
-        method: req.method(),
-      });
-      try { req.continue(); } catch {}
-    });
-
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
-    });
-    
-    await randomDelay(3000, 4000);
-
-    const result = await page.evaluate(() => {
-      // HTML complet de la zone player
-      const playerZone = document.querySelector(
-        '.movie-players, .ftabs, #players, .players-list, .servers'
-      );
-      
-      // HTML autour du player
-      const videoZone = document.querySelector(
-        '.video-container, #player, .player-container, .embed-container'
-      );
-
-      // Tous les éléments cliquables près du player
-      const allClickable = [...document.querySelectorAll(
-        'a, button, [onclick], [data-id], [data-server], [data-src]'
-      )]
-      .filter(el => {
-        const rect = el.getBoundingClientRect();
-        return rect.top > 200 && rect.top < 700;
-      })
-      .map(el => ({
-        tag: el.tagName,
-        text: el.textContent.trim().substring(0, 30),
-        href: el.getAttribute('href')?.substring(0, 100),
-        onclick: el.getAttribute('onclick')?.substring(0, 100),
-        dataId: el.getAttribute('data-id'),
-        dataSrc: el.getAttribute('data-src'),
-        dataServer: el.getAttribute('data-server'),
-        class: el.className?.substring(0, 50),
-        top: Math.round(el.getBoundingClientRect().top),
-      }))
-      .slice(0, 30);
-
-      return {
-        playerZoneHTML: playerZone?.innerHTML?.substring(0, 2000) || 'NON TROUVÉ',
-        videoZoneHTML: videoZone?.innerHTML?.substring(0, 1000) || 'NON TROUVÉ',
-        allClickable,
-        pageTitle: document.title,
-        bodyLength: document.body.innerHTML.length,
-      };
-    });
-
-    res.json({ 
-      success: true, 
-      data: result,
-      networkUrls: capturedUrls.filter(r => 
-        r.type === 'xhr' || r.type === 'fetch' || 
-        r.url.includes('embed') || r.url.includes('player') ||
-        r.url.includes('stream') || r.url.includes('video')
-      ).slice(0, 20),
-    });
-  } catch(e) {
+    const result = await debugMovix(req.params.tmdbId);
+    res.json({ success: true, data: result });
+  } catch (e) {
     res.json({ success: false, error: e.message });
-  } finally {
-    await browserManager.closePage(page);
   }
 });
 
