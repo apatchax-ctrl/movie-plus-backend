@@ -204,14 +204,14 @@ router.get('/films/player-debug', async (req, res) => {
   const capturedUrls = [];
 
   try {
-    const url = req.query.url || 'https://fs17.lol/index.php?newsid=15126941';
+    const url = req.query.url || 'https://fs17.lol/index.php?newsid=15120731';
     
-    // Intercepte TOUTES les requêtes
     await page.setRequestInterception(true);
     page.on('request', req => {
       capturedUrls.push({
-        url: req.url().substring(0, 150),
+        url: req.url().substring(0, 200),
         type: req.resourceType(),
+        method: req.method(),
       });
       try { req.continue(); } catch {}
     });
@@ -221,79 +221,57 @@ router.get('/films/player-debug', async (req, res) => {
       timeout: 60000
     });
     
-    await randomDelay(2000, 3000);
-
-    // Cherche les boutons player et clique
-    await page.evaluate(() => {
-      const btns = document.querySelectorAll(
-        '.movie-players a, .ftabs a, .tab-item, ' +
-        '.server-item, [data-file], .player-tab'
-      );
-      if (btns.length > 0) btns[0].click();
-    });
-
     await randomDelay(3000, 4000);
 
     const result = await page.evaluate(() => {
-      // Tous les iframes
-      const iframes = [...document.querySelectorAll('iframe')]
-        .map(el => ({
-          src: el.src,
-          dataSrc: el.getAttribute('data-src'),
-          id: el.id,
-          class: el.className,
-          width: el.width,
-        }));
+      // HTML complet de la zone player
+      const playerZone = document.querySelector(
+        '.movie-players, .ftabs, #players, .players-list, .servers'
+      );
+      
+      // HTML autour du player
+      const videoZone = document.querySelector(
+        '.video-container, #player, .player-container, .embed-container'
+      );
 
-      // Contenu de .movie-players
-      const moviePlayers = document.querySelector('.movie-players');
-      const moviePlayersHTML = moviePlayers?.innerHTML?.substring(0, 1000) || 'NON TROUVÉ';
+      // Tous les éléments cliquables près du player
+      const allClickable = [...document.querySelectorAll(
+        'a, button, [onclick], [data-id], [data-server], [data-src]'
+      )]
+      .filter(el => {
+        const rect = el.getBoundingClientRect();
+        return rect.top > 200 && rect.top < 700;
+      })
+      .map(el => ({
+        tag: el.tagName,
+        text: el.textContent.trim().substring(0, 30),
+        href: el.getAttribute('href')?.substring(0, 100),
+        onclick: el.getAttribute('onclick')?.substring(0, 100),
+        dataId: el.getAttribute('data-id'),
+        dataSrc: el.getAttribute('data-src'),
+        dataServer: el.getAttribute('data-server'),
+        class: el.className?.substring(0, 50),
+        top: Math.round(el.getBoundingClientRect().top),
+      }))
+      .slice(0, 30);
 
-      // Contenu de .video-container
-      const videoContainer = document.querySelector('.video-container');
-      const videoContainerHTML = videoContainer?.innerHTML?.substring(0, 500) || 'NON TROUVÉ';
-
-      // Scripts avec file/source
-      const scripts = [...document.querySelectorAll('script')]
-        .map(s => s.innerHTML)
-        .filter(s => s.includes('file') || s.includes('source') || 
-                     s.includes('m3u8') || s.includes('mp4') ||
-                     s.includes('jwplayer') || s.includes('player'))
-        .map(s => s.substring(0, 500))
-        .slice(0, 5);
-
-      // Video tags
-      const videos = [...document.querySelectorAll('video, video source')]
-        .map(v => ({ src: v.src, dataSrc: v.getAttribute('data-src') }));
-
-      return { 
-        iframes, 
-        moviePlayersHTML,
-        videoContainerHTML,
-        scripts,
-        videos,
+      return {
+        playerZoneHTML: playerZone?.innerHTML?.substring(0, 2000) || 'NON TROUVÉ',
+        videoZoneHTML: videoZone?.innerHTML?.substring(0, 1000) || 'NON TROUVÉ',
+        allClickable,
+        pageTitle: document.title,
         bodyLength: document.body.innerHTML.length,
       };
     });
 
-    // URLs réseau intéressantes
-    const interesting = capturedUrls.filter(r => 
-      r.url.includes('m3u8') || 
-      r.url.includes('mp4') ||
-      r.url.includes('stream') ||
-      r.url.includes('embed') ||
-      r.url.includes('player') ||
-      r.url.includes('video') ||
-      r.type === 'media' ||
-      r.type === 'xhr' ||
-      r.type === 'fetch'
-    );
-
     res.json({ 
       success: true, 
       data: result,
-      networkUrls: interesting,
-      allUrls: capturedUrls.slice(0, 80),
+      networkUrls: capturedUrls.filter(r => 
+        r.type === 'xhr' || r.type === 'fetch' || 
+        r.url.includes('embed') || r.url.includes('player') ||
+        r.url.includes('stream') || r.url.includes('video')
+      ).slice(0, 20),
     });
   } catch(e) {
     res.json({ success: false, error: e.message });
