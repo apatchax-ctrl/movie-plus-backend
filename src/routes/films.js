@@ -163,20 +163,22 @@ router.get('/films/detail', cacheMiddleware(CACHE.DETAIL), async (req, res) => {
 
 // ─── LIEN VIDÉO ────────────────────────────────────────
 // GET /api/films/video?url=URL_ENCODEE
-// Scrape le détail puis extrait le lien vidéo en une seule étape
 router.get('/films/video', cacheMiddleware(CACHE.VIDEO), async (req, res) => {
   try {
     const { url } = req.query;
-    if (!url) return res.status(400).json({ success: false, error: 'Paramètre url manquant' });
+    if (!url) return res.status(400).json({ 
+      success: false, error: 'Paramètre url manquant' 
+    });
+    
     const filmUrl = decodeUrl(url);
+    const { getVideoUrl } = require('../scrapers/playerScraper');
     
-    // 1. Récupère les sources du film
-    const detail = await scrapeFilmDetail(filmUrl);
-    if (!detail) return res.status(404).json({ success: false, error: 'Film non trouvé' });
+    // Passe directement filmUrl au player scraper
+    const videoData = await getVideoUrl([], [], filmUrl);
     
-    // 2. Extrait le vrai lien vidéo
-    const videoData = await getVideoUrl(detail.players, detail.iframeSources);
-    if (!videoData) return res.status(404).json({ success: false, error: 'Aucun lien vidéo disponible' });
+    if (!videoData) return res.status(404).json({ 
+      success: false, error: 'Aucun lien vidéo disponible' 
+    });
     
     res.json({ success: true, data: videoData });
   } catch (e) {

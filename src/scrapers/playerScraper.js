@@ -1,96 +1,140 @@
 const browserManager = require('./browser');
-const { BASE_URL } = require('../config');
 const { randomDelay } = require('../utils/helpers');
-const axios = require('axios');
-const { HEADERS } = require('../config');
 
-// Décode un lien /link/BASE64 pour obtenir l'URL du lecteur
-// fs17.lol encode les liens vidéo en base64 JSON
-async function decodeLinkPath(linkPath) {
-  try {
-    const fullUrl = linkPath.startsWith('http') ? linkPath : BASE_URL + linkPath;
-    
-    // La page /link/CODE redirige vers l'URL du lecteur
-    const response = await axios.get(fullUrl, {
-      headers: HEADERS,
-      maxRedirects: 0,
-      validateStatus: (s) => s < 400,
-      timeout: 10000,
-    });
-
-    // Si redirection, l'URL est dans Location header
-    if (response.headers.location) {
-      return response.headers.location;
-    }
-
-    // Sinon, essaie de décoder le base64 manuellement
-    const base64Part = linkPath.split('/link/')[1];
-    if (base64Part) {
-      const decoded = Buffer.from(base64Part, 'base64').toString('utf-8');
-      const json = JSON.parse(decoded);
-      // json contient { file, player_id, video_id }
-      // construire l'URL du player
-      if (json.file && json.video_id) {
-        return `${BASE_URL}/${json.file}?p_id=${json.player_id}&c_id=${json.video_id}`;
-      }
-    }
-
-    return null;
-  } catch (err) {
-    console.error('❌ Erreur décodage lien:', err.message);
-    return null;
-  }
-}
-
-// Ouvre un lecteur et intercepte le flux vidéo (.m3u8 ou .mp4)
-async function extractVideoFromPlayer(playerUrl) {
-  if (!playerUrl) return null;
+async function getVideoUrl(players = [], iframeSources = [], filmUrl = null) {
+  if (!filmUrl) return null;
   
   const page = await browserManager.newPage(false);
   let videoUrl = null;
 
   try {
-    console.log(`🎬 Extraction vidéo depuis: ${playerUrl}`);
+    console.log('🎬 Extraction vidéo depuis:', filmUrl);
 
-    // Intercepter les requêtes réseau pour capturer .m3u8 ou .mp4
+    // Intercepte les requêtes réseau pour capturer .m3u8 ou .mp4
+    const capturedUrls = [];
     await page.setRequestInterception(true);
     
-    page.on('request', (req) => {
+    page.on('request', req => {
       const url = req.url();
-      if ((url.includes('.m3u8') || url.includes('.mp4')) && !videoUrl) {
-        videoUrl = url;
-        console.log(`✅ URL vidéo trouvée: ${url.substring(0, 80)}...`);
+      if (url.includes('.m3u8') || 
+          url.includes('.mp4') ||
+          url.includes('stream') ||
+          url.includes('video') ||
+          url.includes('playlist')) {
+        capturedUrls.push(url);
+        console.log('📡 URL capturée:', url.substring(0, 100));
       }
-      // Ne pas bloquer les requêtes (on a besoin que la page charge)
       try { req.continue(); } catch {}
     });
 
-    await page.goto(playerUrl, {
+    await page.goto(filmUrl, {
       waitUntil: 'networkidle2',
-      timeout: 20000,
+      timeout: 60000,
     });
 
-    // Chercher le bouton play et cliquer si nécessaire
-    try {
-      const playBtn = await page.$('.play-btn, .vjs-big-play-button, button[class*="play"], [aria-label*="play"]');
-      if (playBtn) {
-        await playBtn.click();
-        await randomDelay(2000, 4000);
+    await randomDelay(2000, 3000);
+
+    // Cherche et clique sur le premier bouton player disponible
+    const clicked = await page.evaluate(() => {
+      // Cherche les boutons serveurs dans .movie-players
+      const playerBtns = document.querySelectorAll(
+        '.movie-players a, .ftabs a, .tabs-box a, ' +
+        '.server-btn, .player-btn, [data-file], ' +
+        '.tab-item, .ftabs .tabs-sel'
+      );
+      
+      console.log('Boutons player trouvés:', playerBtns.length);
+      
+      if (playerBtns.length > 0) {
+        playerBtns[0].click();
+        return true;
       }
-    } catch {}
 
-    // Attendre encore un peu pour que le flux démarre
-    if (!videoUrl) await randomDelay(3000, 5000);
+      // Cherche dans video-container
+      const videoContainer = document.querySelector(
+        '.video-container, .movie-player, #player'
+      );
+      if (videoContainer) {
+        videoContainer.click();
+        return true;
+      }
 
-    // Chercher aussi dans le HTML (parfois l'URL est dans le source)
+      return false;
+    });
+
+    console.log('Click player:', clicked);
+    await randomDelay(3000, 5000);
+
+    // Cherche iframe qui apparaît après le clic
+    const iframeSrc = await page.evaluate(() => {
+      const iframes = [...document.querySelectorAll('iframe')];
+      for (const iframe of iframes) {
+        const src = iframe.src || iframe.getAttribute('data-src') || '';
+        if (src && 
+            !src.includes('newsid') && 
+            src.startsWith('http') &&
+            src.length > 20) {
+          return src;
+        }
+      }
+      return null;
+    });
+
+    console.log('iframe trouvé:', iframeSrc);
+
+    // Si on a trouvé une iframe, on l'ouvre pour extraire le vrai lien
+    if (iframeSrc) {
+      const videoFromIframe = await extractFromIframe(iframeSrc);
+      if (videoFromIframe) return videoFromIframe;
+    }
+
+    // Cherche dans les URLs capturées
+    videoUrl = capturedUrls.find(u => 
+      u.includes('.m3u8') || u.includes('.mp4')
+    ) || null;
+
+    // Cherche dans le HTML de la page
     if (!videoUrl) {
-      const content = await page.content();
-      const m3u8Match = content.match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/);
-      const mp4Match = content.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/);
+      const pageContent = await page.content();
+      const m3u8Match = pageContent.match(
+        /https?:\/\/[^"'\\s\\]+\.m3u8[^"'\\s\\]*/
+      );
+      const mp4Match = pageContent.match(
+        /https?:\/\/[^"'\\s\\]+\.mp4[^"'\\s\\]*/
+      );
       videoUrl = m3u8Match?.[0] || mp4Match?.[0] || null;
     }
 
-    return videoUrl;
+    // Cherche via jwplayer ou autre player JS
+    if (!videoUrl) {
+      videoUrl = await page.evaluate(() => {
+        // jwplayer
+        if (typeof jwplayer !== 'undefined') {
+          try {
+            const src = jwplayer().getPlaylistItem()?.file;
+            if (src) return src;
+          } catch {}
+        }
+        // video tag
+        const video = document.querySelector('video source, video');
+        if (video) {
+          return video.src || video.getAttribute('src') || null;
+        }
+        return null;
+      });
+    }
+
+    console.log('URL vidéo finale:', videoUrl);
+    
+    if (videoUrl) {
+      return {
+        videoUrl,
+        type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
+        source: 'fs17.lol',
+      };
+    }
+
+    return null;
 
   } catch (err) {
     console.error('❌ Erreur extraction vidéo:', err.message);
@@ -100,38 +144,80 @@ async function extractVideoFromPlayer(playerUrl) {
   }
 }
 
-// Fonction principale : prend les players d'un film et retourne le premier lien vidéo
-async function getVideoUrl(players = [], iframeSources = []) {
-  // Essaie d'abord les players encodés base64
-  for (const player of players) {
-    const playerUrl = await decodeLinkPath(player.linkPath || player.fullPath);
-    if (playerUrl) {
-      const videoUrl = await extractVideoFromPlayer(playerUrl);
-      if (videoUrl) {
-        return {
-          videoUrl,
-          type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
-          source: player.label,
-        };
-      }
-    }
-  }
+async function extractFromIframe(iframeSrc) {
+  const page = await browserManager.newPage(false);
+  let videoUrl = null;
 
-  // Essaie les iframes directs
-  for (const iframe of iframeSources) {
-    if (iframe.src) {
-      const videoUrl = await extractVideoFromPlayer(iframe.src);
-      if (videoUrl) {
-        return {
-          videoUrl,
-          type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
-          source: iframe.label,
-        };
-      }
-    }
-  }
+  try {
+    console.log('🎬 Extraction depuis iframe:', iframeSrc);
 
-  return null;
+    const capturedUrls = [];
+    await page.setRequestInterception(true);
+    
+    page.on('request', req => {
+      const url = req.url();
+      if (url.includes('.m3u8') || url.includes('.mp4')) {
+        capturedUrls.push(url);
+      }
+      try { req.continue(); } catch {}
+    });
+
+    await page.goto(iframeSrc, {
+      waitUntil: 'networkidle2',
+      timeout: 30000,
+    });
+
+    await randomDelay(3000, 5000);
+
+    // Clic sur play si bouton présent
+    try {
+      const playBtn = await page.$(
+        '.play-btn, .vjs-big-play-button, ' +
+        'button[class*="play"], [aria-label*="play"], ' +
+        '.jw-icon-display, #playbtn'
+      );
+      if (playBtn) {
+        await playBtn.click();
+        await randomDelay(2000, 3000);
+      }
+    } catch {}
+
+    videoUrl = capturedUrls.find(u => 
+      u.includes('.m3u8') || u.includes('.mp4')
+    ) || null;
+
+    if (!videoUrl) {
+      const content = await page.content();
+      const m3u8 = content.match(/https?:\/\/[^"'\\s\\]+\.m3u8[^"'\\s\\]*/);
+      const mp4 = content.match(/https?:\/\/[^"'\\s\\]+\.mp4[^"'\\s\\]*/);
+      videoUrl = m3u8?.[0] || mp4?.[0] || null;
+    }
+
+    if (!videoUrl) {
+      videoUrl = await page.evaluate(() => {
+        if (typeof jwplayer !== 'undefined') {
+          try { return jwplayer().getPlaylistItem()?.file; } catch {}
+        }
+        const video = document.querySelector('video');
+        return video?.src || null;
+      });
+    }
+
+    if (videoUrl) {
+      return {
+        videoUrl,
+        type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
+        source: iframeSrc,
+      };
+    }
+    return null;
+
+  } catch (err) {
+    console.error('❌ Erreur iframe:', err.message);
+    return null;
+  } finally {
+    await browserManager.closePage(page);
+  }
 }
 
-module.exports = { decodeLinkPath, extractVideoFromPlayer, getVideoUrl };
+module.exports = { getVideoUrl, extractFromIframe };

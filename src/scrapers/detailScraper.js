@@ -1,6 +1,7 @@
 const browserManager = require('./browser');
 const { BASE_URL } = require('../config');
 const { cleanText, toAbsoluteUrl, formatDuration, formatRating, randomDelay, extractIdFromUrl } = require('../utils/helpers');
+const { getVideoUrl } = require('./playerScraper');
 
 async function scrapeFilmDetail(filmUrl) {
   const page = await browserManager.newPage(false);
@@ -69,6 +70,9 @@ async function scrapeFilmDetail(filmUrl) {
       };
     });
 
+    // Optionnel: tente d'extraire un lien vidéo directement en passant filmUrl
+    const videoData = await getVideoUrl(data.players, data.iframeSources, filmUrl);
+
     return {
       id: filmUrl.match(/newsid=(\d+)/)?.[1] || '0',
       title: cleanText(data.title),
@@ -82,6 +86,7 @@ async function scrapeFilmDetail(filmUrl) {
       players: data.players,
       iframeSources: data.iframeSources,
       source: 'fs17.lol',
+      video: videoData || null,
     };
 
   } catch (err) {
