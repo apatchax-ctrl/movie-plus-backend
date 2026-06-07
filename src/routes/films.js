@@ -169,17 +169,12 @@ router.get('/films/video', cacheMiddleware(CACHE.VIDEO), async (req, res) => {
     if (!url) return res.status(400).json({ 
       success: false, error: 'Paramètre url manquant' 
     });
-    
-    const filmUrl = decodeUrl(url);
+    const filmUrl = decodeURIComponent(url);
     const { getVideoUrl } = require('../scrapers/playerScraper');
-    
-    // Passe directement filmUrl au player scraper
     const videoData = await getVideoUrl([], [], filmUrl);
-    
     if (!videoData) return res.status(404).json({ 
       success: false, error: 'Aucun lien vidéo disponible' 
     });
-    
     res.json({ success: true, data: videoData });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
