@@ -65,6 +65,13 @@ module.exports = {
   }
   ,
   TMDB_API_KEY: process.env.TMDB_API_KEY,
+  // Log TMDB key load status
+  // (Permet de vérifier en runtime que la variable d'environnement est présente)
+  // Ne pas logguer la clé elle-même pour des raisons de sécurité
+  __log__: (function(){
+    try{ console.log('TMDB KEY:', process.env.TMDB_API_KEY ? 'OK' : 'MANQUANTE'); }catch(e){}
+    return true;
+  })(),
   TMDB_BASE_URL: process.env.TMDB_BASE_URL || 'https://api.themoviedb.org/3',
   TMDB_IMAGE_URL: process.env.TMDB_IMAGE_URL || 'https://image.tmdb.org/t/p/w500',
   MOVIX_BASE_URL: process.env.MOVIX_BASE_URL || 'https://movix.golf',

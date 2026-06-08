@@ -218,25 +218,28 @@ async function debugMovix(tmdbId) {
   const page = await browserManager.newPage(false);
   try {
     const url = `${MOVIX_BASE_URL}/movie/${tmdbId}`;
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-    await randomDelay(2000, 3000);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // Attendre que le contenu JS s'exécute
+    await new Promise(r => setTimeout(r, 5000));
+
+    // Scroll pour forcer le chargement paresseux
+    await page.evaluate(() => window.scrollTo(0, 500));
+    await new Promise(r => setTimeout(r, 2000));
 
     const result = await page.evaluate(() => {
-      const btns = [...document.querySelectorAll('button, a')]
-        .map(el => ({
-          tag: el.tagName,
-          text: el.textContent.trim().substring(0, 30),
-          class: el.className?.substring(0, 50),
-          href: el.getAttribute('href'),
-        }))
-        .filter(el => el.text.length > 0)
-        .slice(0, 30);
-
       return {
         title: document.title,
         url: window.location.href,
-        btns,
         bodyLength: document.body.innerHTML.length,
+        bodyText: document.body.innerText.substring(0, 500),
+        allBtns: [...document.querySelectorAll('button, a')]
+          .map(el => ({
+            text: el.textContent.trim().substring(0, 30),
+            class: el.className?.substring(0, 50),
+            href: el.getAttribute('href'),
+          }))
+          .filter(el => el.text.length > 0)
+          .slice(0, 30),
       };
     });
 

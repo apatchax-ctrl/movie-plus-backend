@@ -1,18 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const { cacheMiddleware } = require('../middleware/cache');
-const { scrapeSearch } = require('../scrapers/searchScraper');
+const tmdb = require('../services/tmdbService');
 const { CACHE } = require('../config');
 
 // GET /api/search?q=batman
 router.get('/search', cacheMiddleware(CACHE.SEARCH), async (req, res) => {
   try {
-    const { q, type } = req.query;
+    const { q } = req.query;
     if (!q || q.length < 2) {
-      return res.status(400).json({ success: false, error: 'Requête trop courte (min 2 caractères)' });
+      return res.status(400).json({ success: false, error: 'Query trop courte' });
     }
-    const result = await scrapeSearch(q);
-    res.json({ success: true, ...result });
+    const results = await tmdb.searchMovies(q);
+    res.json({ success: true, results, total: results.length, query: q });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
