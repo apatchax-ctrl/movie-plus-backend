@@ -183,41 +183,52 @@ async function trySuperembed(tmdbId) {
 async function debugMovix(tmdbId) {
   const results = [];
   
-  const urls = [
-    `https://vidsrc.to/vapi/movie/w/${tmdbId}`,
-    `https://moviesapi.club/movie/${tmdbId}`,
-    `https://autoembed.co/movie/tmdb/${tmdbId}`,
-    `https://superembed.stream/movie/${tmdbId}`,
-    `https://www.2embed.cc/embed/${tmdbId}`,
-  ];
+  try {
+    // Voir le HTML complet de 2embed.cc
+    const res = await axios.get(
+      `https://www.2embed.cc/embed/${tmdbId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Referer': 'https://www.2embed.cc/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+      },
+      timeout: 15000,
+    });
+    
+    const html = res.data;
+    
+    // Cherche tous les scripts
+    const scriptMatches = html.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) || [];
+    const scripts = scriptMatches
+      .map(s => s.replace(/<\/?:script[^>]*>/gi, '').trim())
+      .filter(s => s.length > 10)
+      .slice(0, 5);
+    
+    // Cherche les iframes
+    const iframes = (html.match(/src=["']([^"']+)["']/gi) || [])
+      .map(s => s.replace(/src=["']/i, '').replace(/["']$/, ''))
+      .filter(s => s.startsWith('http') || s.startsWith('//'))
+      .slice(0, 10);
 
-  for (const url of urls) {
-    try {
-      const res = await axios.get(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': url,
-        },
-        timeout: 10000,
-      });
-      
-      const html = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-      const hasM3u8 = html.includes('.m3u8');
-      const hasMp4 = html.includes('.mp4');
-      const hasFile = html.includes('"file"');
-      
-      results.push({
-        url,
-        status: res.status,
-        length: html.length,
-        hasM3u8,
-        hasMp4,
-        hasFile,
-        preview: html.substring(0, 300),
-      });
-    } catch (e) {
-      results.push({ url, error: e.message });
-    }
+    results.push({
+      url: `https://www.2embed.cc/embed/${tmdbId}`,
+      status: res.status,
+      length: html.length,
+      scripts: scripts.map(s => s.substring(0, 500)),
+      iframes,
+      // Cherche des patterns spécifiques
+      hasIframe: html.includes('<iframe'),
+      hasPlayer: html.includes('player') || html.includes('jwplayer'),
+      hasSource: html.includes('source') || html.includes('src'),
+      // Extrait les URLs interessantes du HTML
+      urls: (html.match(/https?:\/\/[^"]+/g) || [])
+        .filter(u => u.includes('embed') || u.includes('player') || 
+                     u.includes('stream') || u.includes('api'))
+        .slice(0, 15),
+    });
+  } catch (e) {
+    results.push({ error: e.message });
   }
   
   return results;
