@@ -197,9 +197,8 @@ async function debugMovix(tmdbId) {
 
   const urls = [
     `https://vidsrc.to/embed/movie/${tmdbId}`,
+    `https://vsembed.ru/embed/movie/${tmdbId}/`,
     `https://www.2embed.cc/embed/${tmdbId}`,
-    `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`,
-    `https://embed.su/embed/movie/${tmdbId}`,
     `https://player.videasy.net/movie/${tmdbId}`,
   ];
 
