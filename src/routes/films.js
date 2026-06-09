@@ -1,35 +1,44 @@
 const express = require('express');
 const router = express.Router();
-const { cacheMiddleware, setCache, getCache } = require('../middleware/cache');
-const tmdb = require('../services/tmdbService');
-const { getVideoFromMovix, debugMovix } = require('../scrapers/movixScraper');
+const { cacheMiddleware } = require('../middleware/cache');
 const { CACHE } = require('../config');
 
-// ── ACCUEIL ──────────────────────────────────────────
-// GET /api/films/home
-// - Charge en parallèle : trending + nowPlaying + topRated
-// - trending = getTrending()
-// - recent = getNowPlaying()
-// - Cache 30 minutes
-// - Retourne { trending, recent, total }
+// Import TMDB service
+const tmdb = require('../services/tmdbService');
 
-router.get('/films/home', cacheMiddleware(CACHE.HOME), async (req, res) => {
+// Import Movix scraper
+const { getVideoFromMovix, debugMovix } = require('../scrapers/movixScraper');
+
+// ── HOME ──────────────────────────────────
+router.get('/films/home', cacheMiddleware(1800), async (req, res) => {
   try {
+    console.log('🎬 Chargement home depuis TMDB...');
     const [trending, recent, topRated] = await Promise.all([
       tmdb.getTrending(),
       tmdb.getNowPlaying(),
       tmdb.getTopRated(),
     ]);
+    // S'assure que trending et recent sont différents
+    const trendingIds = new Set(trending.map(m => m.id));
+    const recentUnique = recent.filter(m => !trendingIds.has(m.id));
+    
+    console.log(`✅ Home: ${trending.length} trending, ${recentUnique.length} recent`);
     res.json({ 
       success: true, 
-      data: { trending, recent, topRated, total: trending.length } 
+      data: { 
+        trending, 
+        recent: recentUnique, 
+        topRated,
+        total: trending.length 
+      } 
     });
   } catch (e) {
+    console.error('❌ Erreur home:', e.message);
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// ── FILMS RÉCENTS ─────────────────────────────────────
+// ── RECENT ────────────────────────────────
 router.get('/films/recent', cacheMiddleware(CACHE.LIST), async (req, res) => {
   try {
     const films = await tmdb.getNowPlaying();
@@ -39,7 +48,7 @@ router.get('/films/recent', cacheMiddleware(CACHE.LIST), async (req, res) => {
   }
 });
 
-// ── POPULAIRES ────────────────────────────────────────
+// ── POPULAR ───────────────────────────────
 router.get('/films/popular', cacheMiddleware(CACHE.LIST), async (req, res) => {
   try {
     const films = await tmdb.getPopular();
@@ -49,7 +58,27 @@ router.get('/films/popular', cacheMiddleware(CACHE.LIST), async (req, res) => {
   }
 });
 
-// ── FILMS FRANÇAIS ────────────────────────────────────
+// ── TOP RATED ─────────────────────────────
+router.get('/films/toprated', cacheMiddleware(CACHE.LIST), async (req, res) => {
+  try {
+    const films = await tmdb.getTopRated();
+    res.json({ success: true, data: films, total: films.length });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── UPCOMING ──────────────────────────────
+router.get('/films/upcoming', cacheMiddleware(CACHE.LIST), async (req, res) => {
+  try {
+    const films = await tmdb.getUpcoming();
+    res.json({ success: true, data: films, total: films.length });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── FRANÇAIS ──────────────────────────────
 router.get('/films/french', cacheMiddleware(CACHE.LIST), async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -60,25 +89,28 @@ router.get('/films/french', cacheMiddleware(CACHE.LIST), async (req, res) => {
   }
 });
 
-// ── BOLLYWOOD ─────────────────────────────────────────
+// ── BOLLYWOOD ─────────────────────────────
 router.get('/films/bollywood', cacheMiddleware(CACHE.LIST), async (req, res) => {
   try {
-    const films = await tmdb.getBollywoodMovies();
+    const page = parseInt(req.query.page) || 1;
+    const films = await tmdb.getBollywoodMovies(page);
     res.json({ success: true, data: films, total: films.length });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// ── PAR GENRE ─────────────────────────────────────────
+// ── GENRE ─────────────────────────────────
 router.get('/films/genre/:genre', cacheMiddleware(CACHE.LIST), async (req, res) => {
   try {
     const genre = req.params.genre.toLowerCase();
     const genreId = tmdb.GENRE_IDS[genre];
-    if (!genreId) return res.status(400).json({ 
-      success: false, 
-      error: `Genre invalide. Valeurs: ${Object.keys(tmdb.GENRE_IDS).join(', ')}` 
-    });
+    if (!genreId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Genre invalide. Disponibles: ${Object.keys(tmdb.GENRE_IDS).join(', ')}` 
+      });
+    }
     const page = parseInt(req.query.page) || 1;
     const films = await tmdb.getByGenre(genreId, page);
     res.json({ success: true, data: films, genre, total: films.length });
@@ -87,7 +119,7 @@ router.get('/films/genre/:genre', cacheMiddleware(CACHE.LIST), async (req, res) 
   }
 });
 
-// ── DÉTAIL FILM ───────────────────────────────────────
+// ── DÉTAIL ────────────────────────────────
 router.get('/films/detail/:tmdbId', cacheMiddleware(CACHE.DETAIL), async (req, res) => {
   try {
     const film = await tmdb.getMovieDetail(req.params.tmdbId);
@@ -97,22 +129,25 @@ router.get('/films/detail/:tmdbId', cacheMiddleware(CACHE.DETAIL), async (req, r
   }
 });
 
-// ── LIEN VIDÉO ────────────────────────────────────────
+// ── VIDÉO ─────────────────────────────────
 router.get('/films/video/:tmdbId', cacheMiddleware(CACHE.VIDEO), async (req, res) => {
   try {
     const { tmdbId } = req.params;
     const title = req.query.title || '';
+    console.log(`🎬 Vidéo pour TMDB ${tmdbId}: ${title}`);
     const videoData = await getVideoFromMovix(tmdbId, title);
-    if (!videoData) return res.status(404).json({ 
-      success: false, error: 'Vidéo indisponible' 
-    });
+    if (!videoData) {
+      return res.status(404).json({ 
+        success: false, error: 'Vidéo indisponible' 
+      });
+    }
     res.json({ success: true, data: videoData });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// ── GENRES LISTE ──────────────────────────────────────
+// ── GENRES LISTE ──────────────────────────
 router.get('/films/genres', async (req, res) => {
   try {
     const genres = await tmdb.getGenres();
@@ -122,13 +157,24 @@ router.get('/films/genres', async (req, res) => {
   }
 });
 
-// ── CACHE STATS ───────────────────────────────────────
+// ── CACHE STATS ───────────────────────────
 router.get('/films/cache/stats', (req, res) => {
   const { getStats, getKeys } = require('../middleware/cache');
-  res.json({ success: true, stats: getStats(), keys: getKeys().length });
+  res.json({ 
+    success: true, 
+    stats: getStats(), 
+    keys: getKeys().length 
+  });
 });
 
-// ── DEBUG MOVIX ───────────────────────────────────────
+// ── CACHE FLUSH ───────────────────────────
+router.delete('/films/cache/flush', (req, res) => {
+  const { flushAll } = require('../middleware/cache');
+  flushAll();
+  res.json({ success: true, message: 'Cache vidé' });
+});
+
+// ── DEBUG MOVIX ───────────────────────────
 router.get('/films/movix-debug/:tmdbId', async (req, res) => {
   try {
     const result = await debugMovix(req.params.tmdbId);

@@ -7,7 +7,6 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const { PORT, NODE_ENV } = require('./config');
 const browserManager = require('./scrapers/browser');
-const { scrapeHome } = require('./scrapers/homeScraper');
 
 const app = express();
 
@@ -97,33 +96,18 @@ async function start() {
     await browserManager.getBrowser();
     console.log('✅ Browser initialisé');
 
+    // Vider le cache Render temporairement au démarrage
+    const { flushAll } = require('./middleware/cache');
+    try {
+      flushAll();
+      console.log('🗑️ Cache vidé au démarrage');
+    } catch (e) {
+      console.warn('⚠️ Impossible de vider le cache au démarrage:', e.message);
+    }
+
     app.listen(PORT, () => {
       console.log(`🎬 Movie Plus API démarré → http://localhost:${PORT}`);
     });
-
-    // Préchauffage immédiat au démarrage
-    async function warmupCache() {
-      try {
-        console.log('🔥 Préchauffage cache...');
-        const { scrapeHome } = require('./scrapers/homeScraper');
-        const { scrapeFrenchFilms } = require('./scrapers/listScraper');
-        const { setCache } = require('./middleware/cache');
-
-        const home = await scrapeHome(2);
-        setCache('route_/api/films/home', { success: true, data: home }, 1800);
-        console.log(`✅ Home cachée: ${home.total} films`);
-
-        const french = await scrapeFrenchFilms(2);
-        setCache('route_/api/films/french', { success: true, data: french, total: french.length }, 3600);
-        console.log(`✅ Français cachés: ${french.length} films`);
-
-      } catch(e) {
-        console.log('⚠️ Préchauffage échoué:', e.message);
-      }
-    }
-
-    // Lance le préchauffage 3 secondes après démarrage
-    setTimeout(warmupCache, 3000);
 
   } catch (err) {
     console.error('❌ Erreur démarrage:', err);

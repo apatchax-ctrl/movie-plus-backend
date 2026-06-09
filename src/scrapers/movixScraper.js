@@ -2,119 +2,77 @@ const browserManager = require('./browser');
 const { randomDelay } = require('../utils/helpers');
 const { MOVIX_BASE_URL } = require('../config');
 
+const EMBED_URLS = [
+  (tmdbId) => `https://movix.golf/embed/movie/${tmdbId}`,
+  (tmdbId) => `https://movix.golf/player/movie/${tmdbId}`,
+  (tmdbId) => `https://movix.golf/stream/movie/${tmdbId}`,
+  (tmdbId) => `https://vidsrc.to/embed/movie/${tmdbId}`,
+  (tmdbId) => `https://vidsrc.me/embed/movie?tmdb=${tmdbId}`,
+  (tmdbId) => `https://www.2embed.cc/embed/${tmdbId}`,
+  (tmdbId) => `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`,
+];
+
 async function getVideoFromMovix(tmdbId, title) {
+  console.log('🎬 Recherche vidéo pour TMDB:', tmdbId);
+
+  for (const buildUrl of EMBED_URLS) {
+    const embedUrl = buildUrl(tmdbId);
+    console.log('Essai:', embedUrl);
+    const result = await tryEmbedUrl(embedUrl);
+    if (result) {
+      console.log('✅ Vidéo trouvée via:', embedUrl);
+      return result;
+    }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
+  return null;
+}
+
+async function tryEmbedUrl(embedUrl) {
   const page = await browserManager.newPage(false);
   const capturedUrls = [];
 
   try {
-    console.log(`🎬 Movix: ${title} (TMDB: ${tmdbId})`);
-
-    // Intercepte les URLs vidéo
     await page.setRequestInterception(true);
     page.on('request', req => {
       const url = req.url();
       if (url.includes('.m3u8') || url.includes('.mp4')) {
         capturedUrls.push(url);
-        console.log('📡 Vidéo:', url.substring(0, 100));
+        console.log('📡 Capturé:', url.substring(0, 100));
       }
       try { req.continue(); } catch {}
     });
 
-    // Movix utilise les IDs TMDB dans ses URLs
-    // Format : movix.golf/movie/TMDB_ID
-    const movieUrl = `${MOVIX_BASE_URL}/movie/${tmdbId}`;
-    console.log('URL Movix:', movieUrl);
-
-    await page.goto(movieUrl, {
-      waitUntil: 'networkidle2',
-      timeout: 60000,
+    await page.goto(embedUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
     });
 
-    await randomDelay(2000, 3000);
+    await new Promise(r => setTimeout(r, 5000));
 
-    // Clique sur le bouton Regarder
-    const watchClicked = await page.evaluate(() => {
-      const selectors = [
-        'button.watch-btn',
-        '.btn-watch',
-        'a.watch',
-        '[class*="watch"]',
-        '[class*="regarder"]',
-        'button.play',
-        '.play-btn',
-      ];
-      for (const sel of selectors) {
-        const btn = document.querySelector(sel);
-        if (btn) { btn.click(); return sel; }
-      }
-      // Cherche par texte
-      const btns = [...document.querySelectorAll('button, a')];
-      for (const btn of btns) {
-        const text = btn.textContent.trim().toLowerCase();
-        if (text.includes('regarder') || text.includes('watch') || 
-            text.includes('play') || text.includes('lecture')) {
-          btn.click();
-          return btn.textContent.trim();
+    // Clic sur play
+    try {
+      await page.evaluate(() => {
+        const selectors = [
+          '.jw-icon-display', '.vjs-big-play-button',
+          '.play-btn', '[aria-label="Play"]',
+          '.plyr__control--overlaid', 'button.play',
+          '#playbtn', '.fp-play',
+        ];
+        for (const sel of selectors) {
+          const btn = document.querySelector(sel);
+          if (btn) { btn.click(); return; }
         }
-      }
-      return null;
-    });
+        document.body.click();
+      });
+      await new Promise(r => setTimeout(r, 3000));
+    } catch {}
 
-    console.log('Bouton cliqué:', watchClicked);
-    await randomDelay(2000, 3000);
-
-    // Gère la popup pub si elle apparaît
-    await page.evaluate(() => {
-      // Ferme les popups/modals pub
-      const closeSelectors = [
-        '.close', '.modal-close', '[aria-label="close"]',
-        '.close-btn', '#close', '.dismiss',
-      ];
-      for (const sel of closeSelectors) {
-        const btn = document.querySelector(sel);
-        if (btn) btn.click();
-      }
-    });
-
-    await randomDelay(1000, 2000);
-
-    // Clique sur Lecture si présent
-    await page.evaluate(() => {
-      const btns = [...document.querySelectorAll('button, a')];
-      for (const btn of btns) {
-        const text = btn.textContent.trim().toLowerCase();
-        if (text === 'lecture' || text === 'play' || text === 'lancer') {
-          btn.click();
-          return btn.textContent.trim();
-        }
-      }
-    });
-
-    await randomDelay(3000, 5000);
-
-    // Récupère les iframes
-    const iframeSrc = await page.evaluate(() => {
-      const iframes = [...document.querySelectorAll('iframe')];
-      for (const iframe of iframes) {
-        const src = iframe.src || iframe.getAttribute('data-src') || '';
-        if (src && src.startsWith('http') && src.length > 20) {
-          return src;
-        }
-      }
-      return null;
-    });
-
-    console.log('iframe:', iframeSrc);
-
-    // Cherche dans les URLs capturées
+    // Cherche vidéo dans les URLs capturées
     let videoUrl = capturedUrls.find(u => 
       u.includes('.m3u8') || u.includes('.mp4')
     );
-
-    // Si on a une iframe, l'ouvre
-    if (!videoUrl && iframeSrc) {
-      videoUrl = await extractFromIframe(iframeSrc);
-    }
 
     // Cherche dans le HTML
     if (!videoUrl) {
@@ -124,18 +82,31 @@ async function getVideoFromMovix(tmdbId, title) {
       videoUrl = m3u8?.[0] || mp4?.[0] || null;
     }
 
+    // Cherche via jwplayer
+    if (!videoUrl) {
+      videoUrl = await page.evaluate(() => {
+        try {
+          if (typeof jwplayer !== 'undefined') {
+            return jwplayer().getPlaylistItem()?.file || null;
+          }
+        } catch {}
+        const video = document.querySelector('video');
+        return video?.src || null;
+      });
+    }
+
     if (videoUrl) {
       return {
         videoUrl,
         type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
-        source: 'movix.golf',
+        source: embedUrl,
       };
     }
 
     return null;
 
   } catch (err) {
-    console.error('❌ Erreur Movix:', err.message);
+    console.error('❌ Erreur:', embedUrl, err.message);
     return null;
   } finally {
     await browserManager.closePage(page);
