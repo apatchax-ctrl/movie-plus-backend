@@ -20,7 +20,7 @@ if (NODE_ENV !== 'test') app.use(morgan('dev'));
 // ─── RATE LIMITING ─────────────────────────────────────
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 60,
+  max: 500,
   standardHeaders: true,
   message: { success: false, error: 'Trop de requêtes. Réessaie dans 15 minutes.' }
 });
