@@ -184,4 +184,27 @@ router.get('/films/movix-debug/:tmdbId', async (req, res) => {
   }
 });
 
+// ── FS17 SEARCH ───────────────────────────
+router.get('/films/fs17url/:tmdbId', async (req, res) => {
+  try {
+    const { tmdbId } = req.params;
+    const { title, year } = req.query;
+    
+    if (!title) return res.status(400).json({
+      success: false, error: 'Paramètre title manquant'
+    });
+
+    const { searchOnFs17 } = require('../scrapers/fs17Searcher');
+    const fs17Url = await searchOnFs17(title, year);
+    
+    if (!fs17Url) return res.status(404).json({
+      success: false, error: 'Film non trouvé sur fs17.lol'
+    });
+
+    res.json({ success: true, data: { fs17Url } });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 module.exports = router;
