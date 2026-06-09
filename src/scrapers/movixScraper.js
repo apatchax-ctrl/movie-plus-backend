@@ -196,8 +196,8 @@ async function debugMovix(tmdbId) {
   const results = [];
 
   const urls = [
-    `https://www.2embed.cc/embed/${tmdbId}`,
-    `https://player.videasy.net/movie/${tmdbId}`,
+    `https://www.2embed.skin/movie/${tmdbId}`,
+    `https://player.videasy.to/movie/${tmdbId}`,
   ];
 
   for (const url of urls) {
@@ -214,19 +214,19 @@ async function debugMovix(tmdbId) {
       });
 
       await page.goto(url, { 
-        waitUntil: 'domcontentloaded', 
-        timeout: 20000 
+        waitUntil: 'networkidle2', 
+        timeout: 30000 
       });
       
-      // Attendre plus longtemps
       await new Promise(r => setTimeout(r, 5000));
 
-      // Clique sur play si présent
+      // Clique sur play
       await page.evaluate(() => {
         const selectors = [
           '.play-btn', '.jw-icon-display',
           '.vjs-big-play-button', 'button.play',
           '[aria-label="Play"]', '#playbtn',
+          '.plyr__control--overlaid',
         ];
         for (const sel of selectors) {
           const btn = document.querySelector(sel);
@@ -235,47 +235,44 @@ async function debugMovix(tmdbId) {
         document.body.click();
       });
 
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 5000));
 
       const data = await page.evaluate(() => ({
         title: document.title,
+        url: window.location.href,
         bodyLength: document.body.innerHTML.length,
         hasVideo: !!document.querySelector('video'),
         videoSrc: document.querySelector('video')?.src || null,
         iframes: [...document.querySelectorAll('iframe')]
-          .map(f => ({
-            src: f.src || f.getAttribute('data-src') || '',
-            id: f.id,
-            class: f.className,
-          }))
-          .filter(f => f.src),
+          .map(f => f.src || f.getAttribute('data-src') || '')
+          .filter(Boolean),
         scripts: [...document.querySelectorAll('script')]
           .map(s => s.innerHTML)
-          .filter(s => s.includes('file') || s.includes('source') || 
-                       s.includes('m3u8') || s.includes('mp4') ||
-                       s.includes('jwplayer') || s.includes('player'))
-          .map(s => s.substring(0, 300))
+          .filter(s => 
+            s.includes('m3u8') || s.includes('.mp4') ||
+            s.includes('jwplayer') || s.includes('source') ||
+            s.includes('file:') || s.includes('hls')
+          )
+          .map(s => s.substring(0, 400))
           .slice(0, 3),
-        allLinks: [...document.querySelectorAll('a')]
-          .map(a => a.href)
-          .filter(h => h.includes('embed') || h.includes('player') || 
-                       h.includes('stream') || h.includes('video'))
-          .slice(0, 5),
+        buttons: [...document.querySelectorAll('button, a')]
+          .filter(el => el.textContent.trim().length > 0)
+          .map(el => ({
+            text: el.textContent.trim().substring(0, 30),
+            class: el.className?.substring(0, 40),
+            href: el.getAttribute('href'),
+          }))
+          .slice(0, 15),
       }));
 
-      // URLs réseau intéressantes
       const interesting = networkUrls.filter(r =>
+        r.url.includes('.m3u8') || r.url.includes('.mp4') ||
         r.url.includes('embed') || r.url.includes('player') ||
-        r.url.includes('stream') || r.url.includes('.m3u8') ||
-        r.url.includes('.mp4') || r.type === 'xhr' || r.type === 'fetch'
-      );
+        r.url.includes('stream') || r.url.includes('api') ||
+        r.type === 'xhr' || r.type === 'fetch' || r.type === 'media'
+      ).slice(0, 20);
 
-      results.push({ 
-        url, 
-        ...data, 
-        interesting,
-        totalRequests: networkUrls.length 
-      });
+      results.push({ url, ...data, interesting });
 
     } catch (e) {
       results.push({ url, error: e.message });
