@@ -196,8 +196,6 @@ async function debugMovix(tmdbId) {
   const results = [];
 
   const urls = [
-    `https://vidsrc.to/embed/movie/${tmdbId}`,
-    `https://vsembed.ru/embed/movie/${tmdbId}/`,
     `https://www.2embed.cc/embed/${tmdbId}`,
     `https://player.videasy.net/movie/${tmdbId}`,
   ];
@@ -208,19 +206,77 @@ async function debugMovix(tmdbId) {
     try {
       await page.setRequestInterception(true);
       page.on('request', req => {
-        networkUrls.push(req.url().substring(0, 100));
+        networkUrls.push({
+          url: req.url().substring(0, 150),
+          type: req.resourceType(),
+        });
         try { req.continue(); } catch {}
       });
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+      await page.goto(url, { 
+        waitUntil: 'domcontentloaded', 
+        timeout: 20000 
+      });
+      
+      // Attendre plus longtemps
+      await new Promise(r => setTimeout(r, 5000));
+
+      // Clique sur play si présent
+      await page.evaluate(() => {
+        const selectors = [
+          '.play-btn', '.jw-icon-display',
+          '.vjs-big-play-button', 'button.play',
+          '[aria-label="Play"]', '#playbtn',
+        ];
+        for (const sel of selectors) {
+          const btn = document.querySelector(sel);
+          if (btn) { btn.click(); return; }
+        }
+        document.body.click();
+      });
+
       await new Promise(r => setTimeout(r, 3000));
+
       const data = await page.evaluate(() => ({
         title: document.title,
         bodyLength: document.body.innerHTML.length,
         hasVideo: !!document.querySelector('video'),
+        videoSrc: document.querySelector('video')?.src || null,
         iframes: [...document.querySelectorAll('iframe')]
-          .map(f => f.src || f.getAttribute('data-src') || '').filter(Boolean),
+          .map(f => ({
+            src: f.src || f.getAttribute('data-src') || '',
+            id: f.id,
+            class: f.className,
+          }))
+          .filter(f => f.src),
+        scripts: [...document.querySelectorAll('script')]
+          .map(s => s.innerHTML)
+          .filter(s => s.includes('file') || s.includes('source') || 
+                       s.includes('m3u8') || s.includes('mp4') ||
+                       s.includes('jwplayer') || s.includes('player'))
+          .map(s => s.substring(0, 300))
+          .slice(0, 3),
+        allLinks: [...document.querySelectorAll('a')]
+          .map(a => a.href)
+          .filter(h => h.includes('embed') || h.includes('player') || 
+                       h.includes('stream') || h.includes('video'))
+          .slice(0, 5),
       }));
-      results.push({ url, ...data, networkCount: networkUrls.length });
+
+      // URLs réseau intéressantes
+      const interesting = networkUrls.filter(r =>
+        r.url.includes('embed') || r.url.includes('player') ||
+        r.url.includes('stream') || r.url.includes('.m3u8') ||
+        r.url.includes('.mp4') || r.type === 'xhr' || r.type === 'fetch'
+      );
+
+      results.push({ 
+        url, 
+        ...data, 
+        interesting,
+        totalRequests: networkUrls.length 
+      });
+
     } catch (e) {
       results.push({ url, error: e.message });
     } finally {
