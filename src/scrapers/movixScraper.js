@@ -1,223 +1,174 @@
-const browserManager = require('./browser');
+const axios = require('axios');
 const { randomDelay } = require('../utils/helpers');
-const { MOVIX_BASE_URL } = require('../config');
 
-const EMBED_URLS = [
-  (tmdbId) => `https://movix.golf/embed/movie/${tmdbId}`,
-  (tmdbId) => `https://movix.golf/player/movie/${tmdbId}`,
-  (tmdbId) => `https://movix.golf/stream/movie/${tmdbId}`,
-  (tmdbId) => `https://vidsrc.to/embed/movie/${tmdbId}`,
-  (tmdbId) => `https://vidsrc.me/embed/movie?tmdb=${tmdbId}`,
-  (tmdbId) => `https://www.2embed.cc/embed/${tmdbId}`,
-  (tmdbId) => `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`,
+// Sources vidéo qui retournent directement un embed
+// sans nécessiter de clic ou d'interaction
+const EMBED_SOURCES = [
+  (id) => `https://vidsrc.xyz/embed/movie/${id}`,
+  (id) => `https://vidsrc.to/embed/movie/${id}`,
+  (id) => `https://vidsrc.me/embed/movie?tmdb=${id}`,
+  (id) => `https://www.2embed.cc/embed/${id}`,
+  (id) => `https://multiembed.mov/?video_id=${id}&tmdb=1`,
+  (id) => `https://embed.su/embed/movie/${id}`,
+  (id) => `https://player.videasy.net/movie/${id}`,
+  (id) => `https://moviesapi.club/movie/${id}`,
 ];
 
 async function getVideoFromMovix(tmdbId, title) {
-  console.log('🎬 Recherche vidéo pour TMDB:', tmdbId);
+  console.log(`🎬 Recherche vidéo: ${title} (${tmdbId})`);
+  
+  const browserManager = require('./browser');
+  
+  for (const getUrl of EMBED_SOURCES) {
+    const embedUrl = getUrl(tmdbId);
+    console.log('🔍 Essai:', embedUrl);
+    
+    const page = await browserManager.newPage(false);
+    const capturedUrls = [];
+    
+    try {
+      await page.setRequestInterception(true);
+      page.on('request', req => {
+        const url = req.url();
+        if (url.includes('.m3u8') || 
+            url.includes('.mp4') ||
+            url.includes('master') ||
+            url.includes('playlist.m3u')) {
+          capturedUrls.push(url);
+          console.log('📡 Capturé:', url.substring(0, 100));
+        }
+        try { req.continue(); } catch {}
+      });
 
-  for (const buildUrl of EMBED_URLS) {
-    const embedUrl = buildUrl(tmdbId);
-    console.log('Essai:', embedUrl);
-    const result = await tryEmbedUrl(embedUrl);
-    if (result) {
-      console.log('✅ Vidéo trouvée via:', embedUrl);
-      return result;
+      await page.goto(embedUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+
+      await new Promise(r => setTimeout(r, 5000));
+
+      // Clic sur play
+      try {
+        await page.evaluate(() => {
+          const selectors = [
+            '.jw-icon-display',
+            '.vjs-big-play-button', 
+            '.play-btn',
+            '[aria-label="Play"]',
+            '.plyr__control--overlaid',
+            'button.play',
+            '#playbtn',
+            '.fp-play',
+            '.player-play-btn',
+          ];
+          for (const sel of selectors) {
+            const btn = document.querySelector(sel);
+            if (btn) { btn.click(); return sel; }
+          }
+          document.body.click();
+        });
+        await new Promise(r => setTimeout(r, 3000));
+      } catch {}
+
+      // Vérifie URLs capturées
+      let videoUrl = capturedUrls.find(u => 
+        u.includes('.m3u8') || u.includes('.mp4')
+      );
+
+      // Cherche dans le HTML
+      if (!videoUrl) {
+        const html = await page.content();
+        console.log('HTML length:', html.length);
+        
+        const m3u8 = html.match(/https?:\/\/[^"'\\s]+\.m3u8[^"'\\s]*/);
+        const mp4 = html.match(/https?:\/\/[^"'\\s]+\.mp4[^"'\\s]*/);
+        videoUrl = m3u8?.[0] || mp4?.[0] || null;
+      }
+
+      // Cherche via JS player
+      if (!videoUrl) {
+        videoUrl = await page.evaluate(() => {
+          try {
+            if (typeof jwplayer !== 'undefined') {
+              const item = jwplayer().getPlaylistItem();
+              if (item?.file) return item.file;
+            }
+          } catch {}
+          const video = document.querySelector('video');
+          if (video?.src && video.src.length > 10) return video.src;
+          const source = document.querySelector('video source');
+          if (source?.src) return source.src;
+          return null;
+        });
+      }
+
+      if (videoUrl && videoUrl.startsWith('http')) {
+        console.log('✅ Vidéo trouvée:', videoUrl.substring(0, 80));
+        return {
+          videoUrl,
+          type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
+          source: embedUrl,
+        };
+      }
+
+    } catch (err) {
+      console.error('❌ Erreur:', embedUrl, '-', err.message);
+    } finally {
+      await browserManager.closePage(page);
     }
+
     await new Promise(r => setTimeout(r, 1000));
   }
 
+  console.log('❌ Aucune source vidéo trouvée pour TMDB:', tmdbId);
   return null;
 }
 
-async function tryEmbedUrl(embedUrl) {
-  const page = await browserManager.newPage(false);
-  const capturedUrls = [];
-
-  try {
-    await page.setRequestInterception(true);
-    page.on('request', req => {
-      const url = req.url();
-      if (url.includes('.m3u8') || url.includes('.mp4')) {
-        capturedUrls.push(url);
-        console.log('📡 Capturé:', url.substring(0, 100));
-      }
-      try { req.continue(); } catch {}
-    });
-
-    await page.goto(embedUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000,
-    });
-
-    await new Promise(r => setTimeout(r, 5000));
-
-    // Clic sur play
-    try {
-      await page.evaluate(() => {
-        const selectors = [
-          '.jw-icon-display', '.vjs-big-play-button',
-          '.play-btn', '[aria-label="Play"]',
-          '.plyr__control--overlaid', 'button.play',
-          '#playbtn', '.fp-play',
-        ];
-        for (const sel of selectors) {
-          const btn = document.querySelector(sel);
-          if (btn) { btn.click(); return; }
-        }
-        document.body.click();
-      });
-      await new Promise(r => setTimeout(r, 3000));
-    } catch {}
-
-    // Cherche vidéo dans les URLs capturées
-    let videoUrl = capturedUrls.find(u => 
-      u.includes('.m3u8') || u.includes('.mp4')
-    );
-
-    // Cherche dans le HTML
-    if (!videoUrl) {
-      const html = await page.content();
-      const m3u8 = html.match(/https?:\/\/[^"'\\s]+\.m3u8[^"'\\s]*/);
-      const mp4 = html.match(/https?:\/\/[^"'\\s]+\.mp4[^"'\\s]*/);
-      videoUrl = m3u8?.[0] || mp4?.[0] || null;
-    }
-
-    // Cherche via jwplayer
-    if (!videoUrl) {
-      videoUrl = await page.evaluate(() => {
-        try {
-          if (typeof jwplayer !== 'undefined') {
-            return jwplayer().getPlaylistItem()?.file || null;
-          }
-        } catch {}
-        const video = document.querySelector('video');
-        return video?.src || null;
-      });
-    }
-
-    if (videoUrl) {
-      return {
-        videoUrl,
-        type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
-        source: embedUrl,
-      };
-    }
-
-    return null;
-
-  } catch (err) {
-    console.error('❌ Erreur:', embedUrl, err.message);
-    return null;
-  } finally {
-    await browserManager.closePage(page);
-  }
-}
-
-async function extractFromIframe(iframeSrc) {
-  const page = await browserManager.newPage(false);
-  const capturedUrls = [];
-
-  try {
-    await page.setRequestInterception(true);
-    page.on('request', req => {
-      const url = req.url();
-      if (url.includes('.m3u8') || url.includes('.mp4')) {
-        capturedUrls.push(url);
-      }
-      try { req.continue(); } catch {}
-    });
-
-    await page.goto(iframeSrc, {
-      waitUntil: 'networkidle2',
-      timeout: 30000,
-    });
-
-    await randomDelay(3000, 5000);
-
-    // Clique sur play
-    try {
-      await page.evaluate(() => {
-        const playSelectors = [
-          '.jw-icon-display', '.vjs-big-play-button',
-          '.play-btn', '[aria-label="Play"]',
-          '.plyr__control--overlaid',
-        ];
-        for (const sel of playSelectors) {
-          const btn = document.querySelector(sel);
-          if (btn) { btn.click(); return; }
-        }
-        document.body.click();
-      });
-      await randomDelay(2000, 3000);
-    } catch {}
-
-    let videoUrl = capturedUrls.find(u => 
-      u.includes('.m3u8') || u.includes('.mp4')
-    ) || null;
-
-    if (!videoUrl) {
-      const html = await page.content();
-      const m3u8 = html.match(/https?:\/\/[^"'\\s]+\.m3u8[^"'\\s]*/);
-      const mp4 = html.match(/https?:\/\/[^"'\\s]+\.mp4[^"'\\s]*/);
-      videoUrl = m3u8?.[0] || mp4?.[0] || null;
-    }
-
-    if (!videoUrl) {
-      videoUrl = await page.evaluate(() => {
-        try {
-          if (typeof jwplayer !== 'undefined') {
-            return jwplayer().getPlaylistItem()?.file || null;
-          }
-        } catch {}
-        const video = document.querySelector('video');
-        return video?.src || null;
-      });
-    }
-
-    return videoUrl;
-
-  } catch (err) {
-    console.error('❌ Erreur iframe:', err.message);
-    return null;
-  } finally {
-    await browserManager.closePage(page);
-  }
-}
-
-// Debug : inspecte movix.golf pour un film
 async function debugMovix(tmdbId) {
+  const browserManager = require('./browser');
   const page = await browserManager.newPage(false);
+  const capturedUrls = [];
+
   try {
-    const url = `${MOVIX_BASE_URL}/movie/${tmdbId}`;
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    // Attendre que le contenu JS s'exécute
-    await new Promise(r => setTimeout(r, 5000));
+    const sources = EMBED_SOURCES.map(fn => fn(tmdbId));
+    const results = [];
 
-    // Scroll pour forcer le chargement paresseux
-    await page.evaluate(() => window.scrollTo(0, 500));
-    await new Promise(r => setTimeout(r, 2000));
+    for (const url of sources.slice(0, 3)) {
+      const p = await browserManager.newPage(false);
+      const urls = [];
 
-    const result = await page.evaluate(() => {
-      return {
-        title: document.title,
-        url: window.location.href,
-        bodyLength: document.body.innerHTML.length,
-        bodyText: document.body.innerText.substring(0, 500),
-        allBtns: [...document.querySelectorAll('button, a')]
-          .map(el => ({
-            text: el.textContent.trim().substring(0, 30),
-            class: el.className?.substring(0, 50),
-            href: el.getAttribute('href'),
-          }))
-          .filter(el => el.text.length > 0)
-          .slice(0, 30),
-      };
-    });
+      try {
+        await p.setRequestInterception(true);
+        p.on('request', req => {
+          urls.push(req.url().substring(0, 100));
+          try { req.continue(); } catch {}
+        });
 
-    return result;
+        await p.goto(url, { 
+          waitUntil: 'domcontentloaded', 
+          timeout: 20000 
+        });
+        await new Promise(r => setTimeout(r, 3000));
+
+        const data = await p.evaluate(() => ({
+          title: document.title,
+          bodyLength: document.body.innerHTML.length,
+          hasVideo: !!document.querySelector('video'),
+          hasIframe: !!document.querySelector('iframe'),
+        }));
+
+        results.push({ url, ...data, networkCount: urls.length });
+      } catch (e) {
+        results.push({ url, error: e.message });
+      } finally {
+        await browserManager.closePage(p);
+      }
+    }
+
+    return results;
   } finally {
     await browserManager.closePage(page);
   }
 }
 
-module.exports = { getVideoFromMovix, extractFromIframe, debugMovix };
+module.exports = { getVideoFromMovix, debugMovix };
