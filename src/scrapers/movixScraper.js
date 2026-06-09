@@ -1,285 +1,225 @@
-const { randomDelay } = require('../utils/helpers');
+const axios = require('axios');
+
+// APIs qui retournent les sources vidéo directement en JSON
+// sans avoir besoin de Puppeteer
 
 async function getVideoFromMovix(tmdbId, title) {
-  console.log(`🎬 Recherche vidéo: ${title} (${tmdbId})`);
-  const browserManager = require('./browser');
+  console.log(`🎬 Recherche vidéo: ${title} (TMDB: ${tmdbId})`);
 
-  // vidsrc.to fonctionne sur Render
-  const embedUrl = `https://vidsrc.to/embed/movie/${tmdbId}`;
-  console.log('🔍 URL:', embedUrl);
+  // Essaie chaque API dans l'ordre
+  const strategies = [
+    () => tryVidsrcAPI(tmdbId),
+    () => tryMoviesAPIClub(tmdbId),
+    () => tryAutoembed(tmdbId),
+    () => trySuperembed(tmdbId),
+  ];
 
-  const page = await browserManager.newPage(false);
-  const capturedUrls = [];
+  for (const strategy of strategies) {
+    try {
+      const result = await strategy();
+      if (result) {
+        console.log('✅ Vidéo trouvée:', result.source);
+        return result;
+      }
+    } catch (e) {
+      console.error('❌ Stratégie échouée:', e.message);
+    }
+  }
 
+  return null;
+}
+
+// Strategy 1: vidsrc.to API directe
+async function tryVidsrcAPI(tmdbId) {
   try {
-    await page.setRequestInterception(true);
-    page.on('request', req => {
-      const url = req.url();
-      if (url.includes('.m3u8') || url.includes('.mp4') ||
-          url.includes('master') || url.includes('playlist')) {
-        capturedUrls.push(url);
-        console.log('📡 Capturé:', url.substring(0, 120));
-      }
-      try { req.continue(); } catch {}
+    // vidsrc.to expose une API JSON
+    const apiUrl = `https://vidsrc.to/vapi/movie/w/${tmdbId}`;
+    console.log('Essai vidsrc API:', apiUrl);
+    
+    const res = await axios.get(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://vidsrc.to/',
+        'Accept': 'application/json',
+      },
+      timeout: 15000,
     });
 
-    await page.goto(embedUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000,
-    });
+    const data = res.data;
+    console.log('vidsrc API réponse:', JSON.stringify(data).substring(0, 200));
 
-    await new Promise(r => setTimeout(r, 5000));
-
-    // Récupère l'iframe src
-    const iframeSrc = await page.evaluate(() => {
-      const iframes = [...document.querySelectorAll('iframe')];
-      for (const iframe of iframes) {
-        const src = iframe.src || iframe.getAttribute('data-src') || '';
-        if (src && src.startsWith('http') && src.length > 20) {
-          return src;
-        }
-      }
-      return null;
-    });
-
-    console.log('iframe trouvé:', iframeSrc);
-
-    // Vérifie URLs capturées directement
-    let videoUrl = capturedUrls.find(u =>
-      u.includes('.m3u8') || u.includes('.mp4')
-    );
-
-    // Si iframe trouvé, l'ouvre
-    if (!videoUrl && iframeSrc) {
-      console.log('📺 Ouverture iframe:', iframeSrc);
-      const iframePage = await browserManager.newPage(false);
-      const iframeUrls = [];
-
-      try {
-        await iframePage.setRequestInterception(true);
-        iframePage.on('request', req => {
-          const url = req.url();
-          if (url.includes('.m3u8') || url.includes('.mp4') ||
-              url.includes('master') || url.includes('playlist')) {
-            iframeUrls.push(url);
-            console.log('📡 iframe URL:', url.substring(0, 120));
-          }
-          try { req.continue(); } catch {}
-        });
-
-        await iframePage.goto(iframeSrc, {
-          waitUntil: 'domcontentloaded',
-          timeout: 30000,
-        });
-
-        await new Promise(r => setTimeout(r, 5000));
-
-        // Clic sur play
-        try {
-          await iframePage.evaluate(() => {
-            const selectors = [
-              '.jw-icon-display', '.vjs-big-play-button',
-              '.play-btn', '[aria-label="Play"]',
-              '.plyr__control--overlaid', 'button.play',
-              '#playbtn', '.fp-play',
-            ];
-            for (const sel of selectors) {
-              const btn = document.querySelector(sel);
-              if (btn) { btn.click(); return; }
-            }
-            document.body.click();
-          });
-          await new Promise(r => setTimeout(r, 5000));
-        } catch {}
-
-        videoUrl = iframeUrls.find(u =>
-          u.includes('.m3u8') || u.includes('.mp4')
-        );
-
-        // Cherche dans le HTML
-        if (!videoUrl) {
-          const html = await iframePage.content();
-          const m3u8 = html.match(/https?:\/\/[^"'\\s]+\.m3u8[^"'\\s]*/);
-          const mp4 = html.match(/https?:\/\/[^"'\\s]+\.mp4[^"'\\s]*/);
-          videoUrl = m3u8?.[0] || mp4?.[0] || null;
-        }
-
-        // Cherche via JS
-        if (!videoUrl) {
-          videoUrl = await iframePage.evaluate(() => {
-            try {
-              if (typeof jwplayer !== 'undefined') {
-                const item = jwplayer().getPlaylistItem();
-                if (item?.file) return item.file;
-              }
-            } catch {}
-            const video = document.querySelector('video');
-            if (video?.src && video.src.startsWith('http')) return video.src;
-            return null;
-          });
-        }
-
-        // Cherche iframes imbriquées
-        if (!videoUrl) {
-          const nestedIframe = await iframePage.evaluate(() => {
-            const iframes = [...document.querySelectorAll('iframe')];
-            for (const iframe of iframes) {
-              const src = iframe.src || '';
-              if (src && src.startsWith('http') && src.length > 20) return src;
-            }
-            return null;
-          });
-
-          if (nestedIframe) {
-            console.log('📺 iframe imbriquée:', nestedIframe);
-            const result = await extractDeepIframe(nestedIframe, browserManager);
-            if (result) videoUrl = result;
-          }
-        }
-
-      } finally {
-        await browserManager.closePage(iframePage);
+    if (data?.result?.sources) {
+      const source = data.result.sources[0];
+      if (source?.file) {
+        return {
+          videoUrl: source.file,
+          type: source.file.includes('.m3u8') ? 'm3u8' : 'mp4',
+          source: 'vidsrc.to',
+        };
       }
     }
+    return null;
+  } catch (e) {
+    console.error('vidsrc API erreur:', e.message);
+    return null;
+  }
+}
 
-    if (videoUrl && videoUrl.startsWith('http')) {
+// Strategy 2: moviesapi.club
+async function tryMoviesAPIClub(tmdbId) {
+  try {
+    const url = `https://moviesapi.club/movie/${tmdbId}`;
+    console.log('Essai moviesapi.club:', url);
+    
+    const res = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://moviesapi.club/',
+        'Accept': '*/*',
+      },
+      timeout: 15000,
+    });
+
+    const html = res.data;
+    
+    // Cherche le lien vidéo dans le HTML
+    const m3u8 = html.match(/https?:\/\/[^"'\s\\]+\.m3u8[^"'\s\\]*/);
+    const mp4 = html.match(/https?:\/\/[^"'\s\\]+\.mp4[^"'\s\\]*/);
+    
+    if (m3u8 || mp4) {
+      const videoUrl = m3u8?.[0] || mp4?.[0];
       return {
         videoUrl,
         type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
-        source: 'vidsrc.to',
+        source: 'moviesapi.club',
+      };
+    }
+
+    // Cherche dans les scripts
+    const fileMatch = html.match(/"file"\s*:\s*"(https?:[^"]+)"/);
+    if (fileMatch) {
+      return {
+        videoUrl: fileMatch[1].replace(/\\/g, ''),
+        type: fileMatch[1].includes('.m3u8') ? 'm3u8' : 'mp4',
+        source: 'moviesapi.club',
       };
     }
 
     return null;
-
-  } catch (err) {
-    console.error('❌ Erreur:', err.message);
+  } catch (e) {
+    console.error('moviesapi erreur:', e.message);
     return null;
-  } finally {
-    await browserManager.closePage(page);
   }
 }
 
-async function extractDeepIframe(url, browserManager) {
-  const page = await browserManager.newPage(false);
-  const captured = [];
-
+// Strategy 3: autoembed.cc
+async function tryAutoembed(tmdbId) {
   try {
-    await page.setRequestInterception(true);
-    page.on('request', req => {
-      const u = req.url();
-      if (u.includes('.m3u8') || u.includes('.mp4')) captured.push(u);
-      try { req.continue(); } catch {}
+    const url = `https://autoembed.co/movie/tmdb/${tmdbId}`;
+    console.log('Essai autoembed:', url);
+    
+    const res = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://autoembed.co/',
+      },
+      timeout: 15000,
     });
 
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await new Promise(r => setTimeout(r, 5000));
-
-    try {
-      await page.evaluate(() => { document.body.click(); });
-      await new Promise(r => setTimeout(r, 3000));
-    } catch {}
-
-    const videoUrl = captured.find(u => u.includes('.m3u8') || u.includes('.mp4'));
-    if (videoUrl) return videoUrl;
-
-    const html = await page.content();
-    const m3u8 = html.match(/https?:\/\/[^"'\\s]+\.m3u8[^"'\\s]*/);
-    return m3u8?.[0] || null;
-
-  } catch { return null; }
-  finally { await browserManager.closePage(page); }
+    const html = res.data;
+    const m3u8 = html.match(/https?:\/\/[^"'\s\\]+\.m3u8[^"'\s\\]*/);
+    const mp4 = html.match(/https?:\/\/[^"'\s\\]+\.mp4[^"'\s\\]*/);
+    const file = html.match(/"file"\s*:\s*"(https?:[^"]+)"/);
+    
+    const videoUrl = m3u8?.[0] || file?.[1]?.replace(/\\/g, '') || mp4?.[0];
+    if (videoUrl) {
+      return {
+        videoUrl,
+        type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
+        source: 'autoembed.co',
+      };
+    }
+    return null;
+  } catch (e) {
+    console.error('autoembed erreur:', e.message);
+    return null;
+  }
 }
 
-async function debugMovix(tmdbId) {
-  const browserManager = require('./browser');
-  const results = [];
+// Strategy 4: superembed
+async function trySuperembed(tmdbId) {
+  try {
+    const url = `https://superembed.stream/movie/${tmdbId}`;
+    console.log('Essai superembed:', url);
+    
+    const res = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://superembed.stream/',
+      },
+      timeout: 15000,
+    });
 
+    const html = res.data;
+    const m3u8 = html.match(/https?:\/\/[^"'\s\\]+\.m3u8[^"'\s\\]*/);
+    const file = html.match(/"file"\s*:\s*"(https?:[^"]+)"/);
+    
+    const videoUrl = m3u8?.[0] || file?.[1]?.replace(/\\/g, '');
+    if (videoUrl) {
+      return {
+        videoUrl,
+        type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
+        source: 'superembed.stream',
+      };
+    }
+    return null;
+  } catch (e) {
+    console.error('superembed erreur:', e.message);
+    return null;
+  }
+}
+
+// Debug : teste toutes les sources
+async function debugMovix(tmdbId) {
+  const results = [];
+  
   const urls = [
-    `https://www.2embed.skin/movie/${tmdbId}`,
-    `https://player.videasy.to/movie/${tmdbId}`,
+    `https://vidsrc.to/vapi/movie/w/${tmdbId}`,
+    `https://moviesapi.club/movie/${tmdbId}`,
+    `https://autoembed.co/movie/tmdb/${tmdbId}`,
+    `https://superembed.stream/movie/${tmdbId}`,
+    `https://www.2embed.cc/embed/${tmdbId}`,
   ];
 
   for (const url of urls) {
-    const page = await browserManager.newPage(false);
-    const networkUrls = [];
     try {
-      await page.setRequestInterception(true);
-      page.on('request', req => {
-        networkUrls.push({
-          url: req.url().substring(0, 150),
-          type: req.resourceType(),
-        });
-        try { req.continue(); } catch {}
-      });
-
-      await page.goto(url, { 
-        waitUntil: 'networkidle2', 
-        timeout: 30000 
+      const res = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': url,
+        },
+        timeout: 10000,
       });
       
-      await new Promise(r => setTimeout(r, 5000));
-
-      // Clique sur play
-      await page.evaluate(() => {
-        const selectors = [
-          '.play-btn', '.jw-icon-display',
-          '.vjs-big-play-button', 'button.play',
-          '[aria-label="Play"]', '#playbtn',
-          '.plyr__control--overlaid',
-        ];
-        for (const sel of selectors) {
-          const btn = document.querySelector(sel);
-          if (btn) { btn.click(); return; }
-        }
-        document.body.click();
+      const html = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+      const hasM3u8 = html.includes('.m3u8');
+      const hasMp4 = html.includes('.mp4');
+      const hasFile = html.includes('"file"');
+      
+      results.push({
+        url,
+        status: res.status,
+        length: html.length,
+        hasM3u8,
+        hasMp4,
+        hasFile,
+        preview: html.substring(0, 300),
       });
-
-      await new Promise(r => setTimeout(r, 5000));
-
-      const data = await page.evaluate(() => ({
-        title: document.title,
-        url: window.location.href,
-        bodyLength: document.body.innerHTML.length,
-        hasVideo: !!document.querySelector('video'),
-        videoSrc: document.querySelector('video')?.src || null,
-        iframes: [...document.querySelectorAll('iframe')]
-          .map(f => f.src || f.getAttribute('data-src') || '')
-          .filter(Boolean),
-        scripts: [...document.querySelectorAll('script')]
-          .map(s => s.innerHTML)
-          .filter(s => 
-            s.includes('m3u8') || s.includes('.mp4') ||
-            s.includes('jwplayer') || s.includes('source') ||
-            s.includes('file:') || s.includes('hls')
-          )
-          .map(s => s.substring(0, 400))
-          .slice(0, 3),
-        buttons: [...document.querySelectorAll('button, a')]
-          .filter(el => el.textContent.trim().length > 0)
-          .map(el => ({
-            text: el.textContent.trim().substring(0, 30),
-            class: el.className?.substring(0, 40),
-            href: el.getAttribute('href'),
-          }))
-          .slice(0, 15),
-      }));
-
-      const interesting = networkUrls.filter(r =>
-        r.url.includes('.m3u8') || r.url.includes('.mp4') ||
-        r.url.includes('embed') || r.url.includes('player') ||
-        r.url.includes('stream') || r.url.includes('api') ||
-        r.type === 'xhr' || r.type === 'fetch' || r.type === 'media'
-      ).slice(0, 20);
-
-      results.push({ url, ...data, interesting });
-
     } catch (e) {
       results.push({ url, error: e.message });
-    } finally {
-      await browserManager.closePage(page);
     }
   }
+  
   return results;
 }
 
