@@ -207,4 +207,43 @@ router.get('/films/fs17url/:tmdbId', async (req, res) => {
   }
 });
 
+// ── TRAILER (YouTube key) ─────────────────
+router.get('/films/trailer/:tmdbId', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const { TMDB_API_KEY, TMDB_BASE_URL } = require('../config');
+    
+    const response = await axios.get(
+      `${TMDB_BASE_URL}/movie/${req.params.tmdbId}/videos`,
+      { params: { api_key: TMDB_API_KEY, language: 'fr-FR' } }
+    );
+    
+    let videos = response.data.results;
+    
+    // Cherche trailer français d'abord
+    let trailer = videos.find(v => 
+      v.type === 'Trailer' && v.site === 'YouTube'
+    );
+    
+    // Si pas de trailer français, cherche en anglais
+    if (!trailer) {
+      const resEn = await axios.get(
+        `${TMDB_BASE_URL}/movie/${req.params.tmdbId}/videos`,
+        { params: { api_key: TMDB_API_KEY, language: 'en-US' } }
+      );
+      trailer = resEn.data.results.find(v =>
+        v.type === 'Trailer' && v.site === 'YouTube'
+      );
+    }
+    
+    if (!trailer) return res.status(404).json({
+      success: false, error: 'Aucun trailer disponible'
+    });
+    
+    res.json({ success: true, data: { key: trailer.key } });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 module.exports = router;
