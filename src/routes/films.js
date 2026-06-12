@@ -208,6 +208,22 @@ router.get('/films/fs17url/:tmdbId', async (req, res) => {
 });
 
 // ── TRAILER (YouTube key) ─────────────────
+// Route helper when no tmdbId provided
+router.get('/films/trailer', (req, res) => {
+  return res.status(400).json({
+    success: false,
+    error: "Paramètre 'tmdbId' manquant. Utilisation: /api/films/trailer/:tmdbId"
+  });
+});
+
+router.get('/films/trailer/', (req, res) => {
+  return res.status(400).json({
+    success: false,
+    error: "Paramètre 'tmdbId' manquant. Utilisation: /api/films/trailer/:tmdbId"
+  });
+});
+
+// Main trailer route
 router.get('/films/trailer/:tmdbId', async (req, res) => {
   try {
     const axios = require('axios');
