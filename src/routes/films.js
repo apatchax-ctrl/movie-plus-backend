@@ -130,18 +130,96 @@ router.get('/films/detail/:tmdbId', cacheMiddleware(CACHE.DETAIL), async (req, r
 });
 
 // ── VIDÉO ─────────────────────────────────
-router.get('/films/video/:tmdbId', cacheMiddleware(CACHE.VIDEO), async (req, res) => {
+router.get('/films/video', async (req, res) => {
   try {
-    const { tmdbId } = req.params;
-    const title = req.query.title || '';
-    console.log(`🎬 Vidéo pour TMDB ${tmdbId}: ${title}`);
-    const videoData = await getVideoFromMovix(tmdbId, title);
-    if (!videoData) {
-      return res.status(404).json({ 
-        success: false, error: 'Vidéo indisponible' 
+    const { url } = req.query;
+    if (!url) return res.status(400).json({
+      success: false, error: 'URL manquante'
+    });
+    
+    const filmUrl = decodeURIComponent(url);
+    const browserManager = require('../scrapers/browser');
+    const { randomDelay } = require('../utils/helpers');
+    
+    const page = await browserManager.newPage(false);
+    const capturedUrls = [];
+    
+    const ignoredDomains = [
+      'googlevideo.com', 'youtube.com', 
+      'youtu.be', 'ytimg.com',
+    ];
+    
+    const filmDomains = [
+      'vidzy', 'uqload', 'dood', 'voe',
+      'filmoon', 'streamtape',
+    ];
+    
+    try {
+      await page.setRequestInterception(true);
+      page.on('request', req => {
+        const reqUrl = req.url();
+        const isTrailer = ignoredDomains.some(d => reqUrl.includes(d));
+        
+        if (!isTrailer && reqUrl.includes('.m3u8')) {
+          const isFilm = filmDomains.some(d => reqUrl.includes(d));
+          if (isFilm) {
+            capturedUrls.push(reqUrl);
+            console.log('📡 .m3u8 capturé:', reqUrl.substring(0, 100));
+          }
+        }
+        try { req.continue(); } catch {}
       });
+      
+      await page.goto(filmUrl, {
+        waitUntil: 'networkidle2',
+        timeout: 30000,
+      });
+      
+      await randomDelay(2000, 3000);
+      
+      // Clique sur le premier serveur
+      await page.evaluate(() => {
+        const servers = document.querySelectorAll(
+          '.ftabs a, .movie-players a, .server-btn'
+        );
+        if (servers.length > 0) {
+          servers[0].click();
+          console.log('Serveur cliqué');
+        }
+      });
+      
+      await randomDelay(3000, 5000);
+      
+      // Clique sur play
+      await page.evaluate(() => {
+        const plays = document.querySelectorAll(
+          '.jw-icon-display, .vjs-big-play-button, video'
+        );
+        if (plays.length > 0) plays[0].click();
+      });
+      
+      await randomDelay(3000, 5000);
+      
+      if (capturedUrls.length > 0) {
+        return res.json({
+          success: true,
+          data: {
+            videoUrl: capturedUrls[0],
+            type: 'm3u8',
+            source: 'fs17.lol',
+          }
+        });
+      }
+      
+      return res.status(404).json({
+        success: false,
+        error: 'Aucun lien vidéo trouvé'
+      });
+      
+    } finally {
+      await browserManager.closePage(page);
     }
-    res.json({ success: true, data: videoData });
+    
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
