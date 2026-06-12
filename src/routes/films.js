@@ -229,27 +229,47 @@ router.get('/films/trailer/:tmdbId', async (req, res) => {
     const axios = require('axios');
     const { TMDB_API_KEY, TMDB_BASE_URL } = require('../config');
     
-    const response = await axios.get(
+    // Récupère toutes les vidéos (sans forcer la langue) puis filtre
+    const allRes = await axios.get(
       `${TMDB_BASE_URL}/movie/${req.params.tmdbId}/videos`,
-      { params: { api_key: TMDB_API_KEY, language: 'fr-FR' } }
+      { params: { api_key: TMDB_API_KEY } }
     );
-    
-    let videos = response.data.results;
-    
-    // Cherche trailer français d'abord
-    let trailer = videos.find(v => 
-      v.type === 'Trailer' && v.site === 'YouTube'
-    );
-    
-    // Si pas de trailer français, cherche en anglais
+
+    let videos = Array.isArray(allRes.data.results) ? allRes.data.results : [];
+
+    const findFrenchTrailer = (list) => {
+      if (!Array.isArray(list)) return null;
+      // 1) trailer avec iso_639_1 === 'fr'
+      let t = list.find(v => v.type === 'Trailer' && v.site === 'YouTube' && (v.iso_639_1 === 'fr'));
+      if (t) return t;
+      // 2) trailer dont le nom indique VF / version française / french
+      t = list.find(v => v.type === 'Trailer' && v.site === 'YouTube' && /\b(vf|version fran(c|ç)aise|french)\b/i.test(v.name || ''));
+      if (t) return t;
+      // 3) trailer marqué "official" (au cas où la langue n'est pas renseignée mais c'est la VF la plus pertinente)
+      t = list.find(v => v.type === 'Trailer' && v.site === 'YouTube' && v.official === true && /\b(vf|fr)\b/i.test(v.iso_639_1 || ''));
+      if (t) return t;
+      return null;
+    };
+
+    // Cherche d'abord une vidéo explicitement française
+    let trailer = findFrenchTrailer(videos);
+
+    // Si introuvable, essaie la requête avec language=fr-FR (parfois différente)
+    if (!trailer) {
+      const resFr = await axios.get(
+        `${TMDB_BASE_URL}/movie/${req.params.tmdbId}/videos`,
+        { params: { api_key: TMDB_API_KEY, language: 'fr-FR' } }
+      );
+      trailer = findFrenchTrailer(resFr.data.results || []);
+    }
+
+    // Si toujours rien, retombe sur un trailer anglais (fallback)
     if (!trailer) {
       const resEn = await axios.get(
         `${TMDB_BASE_URL}/movie/${req.params.tmdbId}/videos`,
         { params: { api_key: TMDB_API_KEY, language: 'en-US' } }
       );
-      trailer = resEn.data.results.find(v =>
-        v.type === 'Trailer' && v.site === 'YouTube'
-      );
+      trailer = resEn.data.results.find(v => v.type === 'Trailer' && v.site === 'YouTube');
     }
     
     if (!trailer) return res.status(404).json({
