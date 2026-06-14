@@ -1,6 +1,6 @@
 module.exports = {
   PORT: process.env.PORT || 3000,
-  BASE_URL: process.env.BASE_URL || 'https://fs17.lol',
+  BASE_URL: process.env.BASE_URL || 'https://fs15.lol',
   NODE_ENV: process.env.NODE_ENV || 'development',
 
   CACHE: {
