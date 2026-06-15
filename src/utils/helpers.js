@@ -13,7 +13,7 @@ const cleanText = (text) => {
 
 // Extrait l'ID numérique depuis une URL de film
 // ex: /16550-pacific-rim-uprising.html  →  "16550"
-// ex: https://fs17.lol/16550-pacific-rim.html  →  "16550"
+// ex: https://fs15.lol/16550-pacific-rim.html  →  "16550"
 const extractIdFromUrl = (url) => {
   if (!url) return null;
   const match = url.match(/\/(\d+)-/);

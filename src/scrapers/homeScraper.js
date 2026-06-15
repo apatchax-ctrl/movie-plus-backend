@@ -66,7 +66,7 @@ async function scrapePage(url) {
           posterUrl: item.posterUrl || null,
           quality: item.quality || null,
           pageUrl: item.pageUrl,
-          source: 'fs17.lol',
+          source: 'fs15.lol',
         });
       }
     }

@@ -6,7 +6,7 @@ const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Accept-Language': 'fr-FR,fr;q=0.9',
   'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
-  'Referer': 'https://fs17.lol/',
+  'Referer': 'https://fs15.lol/',
 };
 
 async function searchOnFs17(title, year) {

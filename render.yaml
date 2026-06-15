@@ -8,6 +8,6 @@ services:
       - key: NODE_ENV
         value: production
       - key: BASE_URL
-        value: https://fs17.lol
+        value: https://fs15.lol
       - key: PUPPETEER_CACHE_DIR
         value: /opt/render/.cache

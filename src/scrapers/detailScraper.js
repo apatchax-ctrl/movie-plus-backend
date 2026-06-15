@@ -85,7 +85,7 @@ async function scrapeFilmDetail(filmUrl) {
       pageUrl: filmUrl,
       players: data.players,
       iframeSources: data.iframeSources,
-      source: 'fs17.lol',
+      source: 'fs15.lol',
       video: videoData || null,
     };
 

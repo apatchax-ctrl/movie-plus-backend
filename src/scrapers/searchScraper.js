@@ -6,7 +6,7 @@ async function scrapeSearch(query) {
   console.log(`🔍 Recherche: "${query}"`);
   await randomDelay(500, 1200);
   
-  // URL de recherche fs17.lol
+  // URL de recherche fs15.lol
   const url = BASE_URL + '/?do=search&subaction=search&story=' + encodeURIComponent(query);
   const results = await scrapePage(url);
   

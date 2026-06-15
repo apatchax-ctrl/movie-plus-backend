@@ -72,12 +72,12 @@ async function getVideoUrl(players = [], iframeSources = [], filmUrl = null) {
 
     // Récupère l'iframe qui s'est chargé après le clic
     const iframeSrc = await page.evaluate(() => {
-      const iframes = document.querySelectorAll('iframe');
+        const iframes = document.querySelectorAll('iframe');
       for (const iframe of iframes) {
         const src = iframe.src || iframe.getAttribute('data-src') || '';
         if (src && 
             src.startsWith('http') && 
-            !src.includes('fs17.lol') &&
+            !src.includes('fs15.lol') &&
             src.length > 20) {
           console.log('iframe trouvé:', src);
           return src;
@@ -99,11 +99,11 @@ async function getVideoUrl(players = [], iframeSources = [], filmUrl = null) {
       u.includes('.m3u8') || u.includes('.mp4')
     );
 
-    if (videoUrl) {
+      if (videoUrl) {
       return {
         videoUrl,
         type: videoUrl.includes('.m3u8') ? 'm3u8' : 'mp4',
-        source: 'fs17.lol',
+        source: 'fs15.lol',
       };
     }
 
@@ -117,7 +117,7 @@ async function getVideoUrl(players = [], iframeSources = [], filmUrl = null) {
       return {
         videoUrl: url,
         type: url.includes('.m3u8') ? 'm3u8' : 'mp4',
-        source: 'fs17.lol',
+        source: 'fs15.lol',
       };
     }
 

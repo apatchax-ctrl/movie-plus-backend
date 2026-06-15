@@ -11,7 +11,7 @@ module.exports = {
     VIDEO:  parseInt(process.env.CACHE_TTL_VIDEO)  || 1800,
   },
 
-  // URLs exactes de fs17.lol découvertes par analyse du site
+  // URLs exactes de fs15.lol découvertes par analyse du site
   URLS: {
     home:        '/films/',
     homePage:    '/films/page/',      // + numéro ex: /films/page/2/
@@ -41,7 +41,7 @@ module.exports = {
     espionnage:     '/films/espionnages/',
   },
 
-  // Genres disponibles sur fs17.lol
+  // Genres disponibles sur fs15.lol
   GENRES: [
     'Action', 'Aventure', 'Animation', 'Biopic', 'Comédie',
     'Drame', 'Documentaire', 'Famille', 'Fantastique', 'Thriller',
@@ -55,7 +55,7 @@ module.exports = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
-    'Referer': 'https://fs17.lol/',
+    'Referer': 'https://fs15.lol/',
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
     'Sec-Fetch-Site': 'same-origin',

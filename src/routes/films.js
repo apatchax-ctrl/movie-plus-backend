@@ -206,7 +206,7 @@ router.get('/films/video', async (req, res) => {
           data: {
             videoUrl: capturedUrls[0],
             type: 'm3u8',
-            source: 'fs17.lol',
+            source: 'fs15.lol',
           }
         });
       }
@@ -276,7 +276,7 @@ router.get('/films/fs17url/:tmdbId', async (req, res) => {
     const fs17Url = await searchOnFs17(title, year);
     
     if (!fs17Url) return res.status(404).json({
-      success: false, error: 'Film non trouvé sur fs17.lol'
+      success: false, error: 'Film non trouvé sur fs15.lol'
     });
 
     res.json({ success: true, data: { fs17Url } });
