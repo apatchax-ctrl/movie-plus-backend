@@ -262,6 +262,80 @@ router.get('/films/movix-debug/:tmdbId', async (req, res) => {
   }
 });
 
+// ── PURSTREAM DEBUG ───────────────────────
+router.get('/films/purstream-debug/:tmdbId', async (req, res) => {
+  try {
+    const tmdbId = req.params.tmdbId;
+    const browserManager = require('../scrapers/browser');
+    
+    // Encode en base64 : {"type":"movie","id":TMDB_ID}
+    const payload = JSON.stringify({ type: 'movie', id: parseInt(tmdbId) });
+    const base64 = Buffer.from(payload).toString('base64');
+    const watchUrl = `https://purstream.ch/watch/${base64}`;
+    
+    console.log('🎬 URL Purstream:', watchUrl);
+    
+    const page = await browserManager.newPage(false);
+    const capturedUrls = [];
+    
+    try {
+      await page.setRequestInterception(true);
+      page.on('request', req => {
+        const url = req.url();
+        if (url.includes('.m3u8') || url.includes('master')) {
+          capturedUrls.push(url);
+          console.log('📡 Capturé:', url.substring(0, 150));
+        }
+        try { req.continue(); } catch {}
+      });
+
+      await page.goto(watchUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+
+      await new Promise(r => setTimeout(r, 5000));
+
+      const pageData = await page.evaluate(() => ({
+        title: document.title,
+        bodyLength: document.body.innerHTML.length,
+        url: window.location.href,
+      }));
+
+      // Clique sur Regarder/Lecture
+      await page.evaluate(() => {
+        const btns = [...document.querySelectorAll('button, a')];
+        for (const btn of btns) {
+          const text = btn.textContent.trim().toLowerCase();
+          if (text.includes('regarder') || text.includes('lecture') || 
+              text.includes('watch') || text.includes('play')) {
+            btn.click();
+            return text;
+          }
+        }
+        return null;
+      });
+
+      await new Promise(r => setTimeout(r, 5000));
+
+      res.json({
+        success: true,
+        data: {
+          watchUrl,
+          pageData,
+          capturedUrls,
+        }
+      });
+
+    } finally {
+      await browserManager.closePage(page);
+    }
+
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 // ── FS17 SEARCH ───────────────────────────
 router.get('/films/fs17url/:tmdbId', async (req, res) => {
   try {
